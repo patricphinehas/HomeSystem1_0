@@ -5,7 +5,8 @@ import { spawn } from "node:child_process";
 // Both are started through this node binary rather than through a shell: on
 // Windows, spawning the npx/next .cmd shims without a shell fails with EINVAL.
 const procs = [
-  spawn(process.execPath, ["--watch", "server/index.ts"], { stdio: "inherit" }),
+  // Next reads .env by itself; the API is a plain node process, so it is told to.
+  spawn(process.execPath, ["--env-file-if-exists=.env", "--watch", "server/index.ts"], { stdio: "inherit" }),
   spawn(process.execPath, ["node_modules/next/dist/bin/next", "dev"], { stdio: "inherit" }),
 ];
 

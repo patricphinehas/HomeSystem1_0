@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { compareWithHistory, normalizeBill, today, type Bill } from "./bill.ts";
+import { compareWithHistory, normalizeBill, normalizeBills, sampleJson, today, type Bill } from "./bill.ts";
 
 const ok = (input: unknown): Bill => {
   const result = normalizeBill(input);
@@ -78,4 +78,35 @@ test("a purchase is scored against the item's price reference", () => {
   assert.equal(compareWithHistory(line, undefined).verdict, "new");
   // A per-bottle history says nothing about a per-kg purchase.
   assert.equal(compareWithHistory(line, { ...ref, base: "bottle" }).verdict, "new");
+});
+
+test("the sample in the UI is a valid import, not just illustrative", () => {
+  const result = normalizeBills(JSON.parse(sampleJson()));
+  assert.ok("bills" in result, "error" in result ? result.error : "no bills");
+  assert.equal(result.bills.length, 2);
+  // The 250 g line is normalised the same way a typed one would be.
+  const tea = result.bills[0].items.find((i) => i.name === "Tea leaves")!;
+  assert.equal(tea.base, "kg");
+  assert.equal(tea.unitPrice, 528);
+});
+
+test("an import is all-or-nothing, and says which bill broke it", () => {
+  const good = { date: "2026-10-01", store: "A", items: [{ name: "Rice", qty: 1, unit: "kg", cost: 100 }] };
+  const bad = { ...good, items: [{ name: "Rice", qty: 1, unit: "kg", cost: -1 }] };
+
+  const ok2 = normalizeBills([good, good]);
+  assert.ok("bills" in ok2 && ok2.bills.length === 2);
+
+  const failed = normalizeBills([good, bad, good]);
+  assert.ok("error" in failed);
+  assert.match(failed.error, /Bill 2 of 3: .*cost must be zero or more/);
+
+  assert.match((normalizeBills([]) as { error: string }).error, /no bills in it/);
+  assert.match((normalizeBills(Array(101).fill(good)) as { error: string }).error, /more than 100 bills/);
+});
+
+test("a single bill still works through the import path", () => {
+  const result = normalizeBills({ date: "2026-10-01", store: "A", items: [{ name: "Rice", qty: 1, unit: "kg", cost: 100 }] });
+  assert.ok("bills" in result);
+  assert.equal(result.bills.length, 1);
 });

@@ -1,8 +1,8 @@
 # Home System — development log
 
 Household inventory, bill entry and price analytics. A Next.js app for the
-pages, an Express API for the data, and MongoDB for all of it — nothing is read
-from or written to disk at runtime.
+pages, an Express API for the data, and Supabase (Postgres) for all of it —
+nothing is read from or written to disk at runtime.
 Last updated: 2026-10-18.
 
 ## What it does
@@ -22,8 +22,8 @@ An item is "low" when `qty <= min`. Hitting the minimum is already a problem, so
 | UI | React 19.3, Tailwind 4 (`@tailwindcss/turbopack`) | No component library; the design system is ~10 CSS variables in `app/globals.css`. |
 | Charts | Recharts 3.10 | Line, pie and scatter out of the box, with SVG we can style against our own tokens. |
 | Icons | `@phosphor-icons/react` | |
-| Data API | Express 5 (`server/`) | Asked for explicitly; its own process on port 4000, and the only thing that talks to Mongo. |
-| Storage | MongoDB 7 driver, db `homesystem` | `bills` — one document per bill, items embedded. `categories` — one document per inventory category, items embedded, `_id` is the category's own id. |
+| Data API | Express 5 (`server/`) | Asked for explicitly; its own process on port 4000, and the only thing that talks to the database. |
+| Storage | Supabase (Postgres), `postgres` driver | Four tables — `categories` + `items`, `bills` + `bill_items`. Schema in `supabase/schema.sql`; every query in `server/db.ts`. |
 | Tests | `node --test` over `lib/*.test.ts` | In the runtime already; no Jest/Vitest config to maintain. |
 | Dev annotator | `agentation` (dev dependency) | Click-to-annotate toolbar for pointing a coding agent at an element; mounted in development only. |
 | Package manager | pnpm 12.14 | `pnpm-workspace.yaml` skips `sharp` and `unrs-resolver` builds. |
@@ -32,13 +32,36 @@ Next.js 16 conventions used here that differ from older versions: `cacheComponen
 
 `"type": "module"` is set, so `.ts` files run directly under Node 24's type stripping (`node server/index.ts`) without a build step or a reparse warning.
 
+## Configuration
+
+`.env` (a copy of `.env.example`, which is the one `.env*` file git keeps) holds
+`MONGODB_URI`, `MONGODB_DB`, `API_PORT` and `API_URL`. Next loads it itself; every
+node entry point loads it with `--env-file-if-exists=.env`, so the API, the seed
+and the doctor all see the same values. Each one also has the same default in
+code, so a missing `.env` still runs — `mise run doctor` reports which of the two
+is in effect. It is deliberately *not* duplicated in an `[env]` block in
+`mise.toml`: one place to change it.
+
+`DATABASE_URL` is the only required value and the app will not serve data
+without it — `mise run doctor` fails loudly rather than the pages failing
+quietly. Use the pooled connection string for a long-running server; the direct
+`:5432` one works too. The password must be URL-encoded if it contains
+`@ : / ? # %`.
+
+The Supabase publishable and service-role keys are listed in `.env.example` but
+unused: the server connects with the database password, not through PostgREST.
+That matters for the security posture — see the schema note below.
+
+The Supabase MCP server is configured in `.mcp.json` at project scope, for
+schema work from the editor.
+
 ## Two processes
 
 ```
 browser → :3000  Next.js (pages only)
-                   └── rewrite ─────────→ :4000 Express ── /api/inventory → mongodb homesystem.categories
-                                                           /api/bills     → mongodb homesystem.bills
-                                                           /api/analytics
+                   └── rewrite ─────────→ :4000 Express ── /api/inventory → categories + items
+                                                           /api/bills     → bills + bill_items
+                                                           /api/analytics    (Supabase/Postgres)
 ```
 
 The rewrites live in `next.config.ts`. Next has no route handlers at all — it
@@ -47,8 +70,7 @@ ever talks to one origin and there is no CORS configuration anywhere.
 
 | Variable | Default | Used by |
 |---|---|---|
-| `MONGODB_URI` | `mongodb://127.0.0.1:27017` | Express |
-| `MONGODB_DB` | `homesystem` | Express |
+| `DATABASE_URL` | none — **required** | Express, seed, migrate, doctor |
 | `API_PORT` | `4000` | Express |
 | `API_URL` | `http://127.0.0.1:4000` | Next (rewrite target) |
 
@@ -80,13 +102,16 @@ lib/
   *.test.ts             28 tests over the five lib modules
 server/
   index.ts              the five Express routes
-  db.ts                 lazy Mongo connection, collections, indexes
+  db.ts                 the Postgres connection and every query
 scripts/
   doctor.mjs            the requirement checks behind `mise run doctor`
+  migrate.mjs           applies supabase/schema.sql
   dev.mjs               runs Next and the API together
   seed.mjs              starter inventory + eight months of demo bills
   starter-inventory.mjs the 6 categories / 28 items a fresh database starts with
-mise.toml               toolchain pins, [env] settings and the tasks
+mise.toml               toolchain pins and the tasks
+.env.example            configuration template, Supabase block included
+.mcp.json               Supabase MCP server, project scope
 ```
 
 There is no `data/` directory and no JSON fixture loaded at runtime: the starter
@@ -104,15 +129,17 @@ Five routes. All maths and validation lives in `lib/` as pure functions; `server
 **`POST /api/bills`** — body `{ date, store, note?, items: [{ name, itemId?, category?, qty, unit, cost }] }`.
 Validates through `normalizeBill` (the only gate: date format and not in the future, shop present, 1–200 lines, every line named, quantity > 0, cost >= 0), stores the bill, and answers `201` with the stored bill plus a `comparisons` array saying, per line, whether this was the **best** price yet, **cheaper**, the **same**, **pricier**, or a **new** item.
 
+An import is the same POST with an **array** body, up to 100 bills. It is all-or-nothing: every bill is validated before anything is written, and a failure names which bill in the file broke it, so a bad file never leaves half an import behind (there is no route to delete a bill again). A batch answers with a count rather than price comparisons, because comparing a batch against a history it is itself extending would report nonsense.
+
 **`GET /api/bills?limit=20`** — recent bills, newest first, 1–200.
 
 **`GET /api/analytics`** — the whole report: totals, spend by category and shop, monthly series, projection, month deviation, price index, inflation (per item and averaged), per-purchase deviations, the price book, and the flat purchase lines.
 
-Failure modes: `400` with a human message for a bad bill or unparseable body, `503` naming the database when Mongo cannot be reached, `500` otherwise.
+Failure modes: `400` with a human message for a bad bill or unparseable body; `503` when `DATABASE_URL` is unset, when the database cannot be reached (naming the host it tried, never the password), or when the tables are missing (Postgres `42P01`, answered with "run mise run migrate"); `500` otherwise.
 
 ## How data flows
 
-**Inventory** round-trips through Mongo: `useInventory()` fetches once, every edit builds a whole new document and `PUT`s it, React state updates first so the UI is instant, and a failed write shows "Not saved. Your last change is only in this tab." The client contract did not change when the store moved off disk — only `server/` knows where it lives.
+**Inventory** round-trips through the database: `useInventory()` fetches once, every edit builds a whole new document and `PUT`s it, React state updates first so the UI is instant, and a failed write shows "Not saved. Your last change is only in this tab." The `PUT` is one transaction — upsert every category and item with its position, then delete what is no longer there — so a half-applied edit is impossible. The client contract has not changed through two storage moves (file → Mongo → Postgres); only `server/` has ever known where the data lives.
 
 **Bills** go one way. The form validates with the same `normalizeBill` the API uses (so the error appears next to the field, not after a round trip), `POST`s, and shows the returned per-line verdicts. Nothing is edited after the fact — a wrong bill is a new bill.
 
@@ -164,8 +191,10 @@ small dot is still catchable.
 
 ## Decisions, and what they cost
 
-- **Everything is in Mongo; there is no JSON store.** One place to back up, one process that owns the data, and the inventory can now be queried (there is an index on `items.id`). Cost: the app does not run at all without a database, where previously the inventory survived on a file — and editing the inventory by hand now means `mongosh`, not a text editor.
-- **A category is a document, not a row in one big blob.** `_id` is the category's own id, items are embedded, and `order` keeps the tab order. Keeping the whole inventory in a single document would have been a smaller change but would have been a JSON file wearing a database costume.
+- **Everything is in Supabase; there is no JSON store and no Mongo.** One place to back up, one process that owns the data, and both halves of the model are queryable. Cost: the app does not run at all without a reachable database and a `DATABASE_URL`, and a household app now depends on a hosted service being up.
+- **`bill_items.item_id` is deliberately not a foreign key.** Deleting an inventory item must not delete what you paid for it: the purchase history is the only record that outlives a deleted item or category, and it is what a lost category was once rebuilt from. Every other relationship is a real foreign key with `on delete cascade`.
+- **Row-level security is on, with no policies.** Supabase exposes PostgREST on every project, so tables left open are readable by anyone holding the publishable key. RLS with no policies denies that outright, while this app's own connection — which authenticates as the database owner, not through PostgREST — is unaffected.
+- **Positions are explicit columns.** `categories.position` and `items.position` keep the tab and row order the UI relies on; Postgres has no inherent row order to borrow.
 - **The analytics route scans every bill on each request.** Right at household scale (a decade of weekly bills is a few thousand small documents) and it keeps the maths in one tested place instead of an aggregation pipeline. If it ever gets slow, cache the payload and invalidate on POST.
 - **Bills are write-once.** No edit, no delete route. A mistake is corrected by entering a correcting bill. Cheap now; add a `DELETE` when it actually bites.
 - **Seeding is an explicit command, never automatic.** `pnpm seed` writes the starter inventory and eight months of invented bills, refusing a non-empty database unless `--clear`. The bill prices are made up, every demo bill is noted as such, and the inventory passes through the same validation the API uses so seed data can't be a shape the app would reject.
@@ -209,6 +238,8 @@ small dot is still catchable.
 **Phase 9 — mise tasks.** `mise.toml` pins Node 24 and pnpm 12.14.0, holds the Mongo and port settings in `[env]`, and defines `setup`, `doctor`, `seed`, `develop`, `check` and `build`. `scripts/doctor.mjs` is the interesting one: it checks the Node version against what type stripping needs, pnpm against the `packageManager` pin, the key packages, Mongo's reachability and version, whether the database has been seeded, and whether the two ports are free — exiting 1 only for things that actually block a run. Two bugs in the first cut of it, both found by running it: the port probe bound `127.0.0.1`, which on Windows succeeds even when a server already holds `0.0.0.0`, so it called busy ports free; and passing argv alongside `shell: true` trips a Node deprecation warning.
 
 **Phase 10 — confirm before deleting a category.** One click used to delete a category and every item in it, with no undo and no history to recover from (which is exactly how a category got lost). The button is now two-step: the first click turns it into “Delete <name> and its N items?” with Delete and Cancel, switching tabs abandons it, and nothing is written until Delete is pressed. Inline rather than a `confirm()` dialog or a modal — it names what will be lost, in place, without blocking the page.
+
+**Phase 11 — JSON import, a copyable schema, and `.env`.** `POST /api/bills` now also takes an array (`normalizeBills`), and `/upload` grew an import card: pick a `.json` file, validated in the browser by the same function the API uses so the error names the bill rather than the request, plus a **Copy sample** button and a `<details>` field reference showing the exact shape. The sample is a real import, not an illustration — a test parses it through `normalizeBills` and asserts the 250 g line prices at ₹528/kg. Configuration moved into `.env`. One bug caught before it shipped: the sample built its dates with `today()` at module load, which is a clock read inside a prerendered client component — the same `cacheComponents` error the bill form hit in phase 6. The date is a parameter now, defaulting to a fixed one for the prerender and taking the page's own bill date after hydration.
 
 **Seed data.** Groceries, Cleaning, Bath & utilities, Games, Stationery, Wellness & health — 28 items with rooms, units and minimums.
 
@@ -259,16 +290,18 @@ once at seed time and never again.
 on Windows, `curl https://mise.run | sh` elsewhere.
 
 ```bash
-mise run setup      # mise install (Node 24, pnpm 12.14) + pnpm install
-mise run doctor     # toolchain, dependencies, database, ports
+mise run setup      # mise install (Node 24, pnpm 12.14) + pnpm install + create .env
+#                     then paste DATABASE_URL into .env
+mise run doctor     # toolchain, dependencies, config, database, schema, ports
+mise run migrate    # apply supabase/schema.sql (safe to re-run)
 mise run seed       # starter inventory + demo bills (-- --clear to replace)
 mise run develop    # pages on :3000, data API on :4000
 mise run check      # the test suite
 mise run build      # production build of the pages
 ```
 
-`[env]` in `mise.toml` holds `MONGODB_URI`, `MONGODB_DB` and `API_PORT`, so a
-different database is a one-line change there rather than an export.
+`DATABASE_URL` in `.env` is the only required value; `seed` applies the schema
+itself, so on a fresh project `migrate` is optional.
 
 Every task is a thin wrapper over a script that also works on its own, for
 anyone without mise:
@@ -286,14 +319,15 @@ pnpm build      # production build
 
 `doctor` checks Node (22.18+, since `server/` and `scripts/` are TypeScript run
 without a build step), pnpm against the `packageManager` pin, the key packages,
-that Mongo answers and which version, whether the database holds anything, and
-whether `:3000` and `:4000` are free. Missing requirements exit 1; "not seeded
-yet" and "port already in use" are warnings, because both are often fine.
+whether `.env` was loaded, that Supabase answers and which Postgres version,
+whether the tables exist and hold anything, and whether `:3000` and `:4000` are
+free. Missing requirements exit 1; "tables are empty" and "port already in use"
+are warnings, because both are often fine.
 
-MongoDB has to be reachable at `MONGODB_URI` before **any** page shows data, and
-an empty database means an empty app until `pnpm seed` runs or you add a category
-by hand. When Mongo is unreachable the pages say which database and port they
-tried.
+Supabase has to be reachable at `DATABASE_URL` before **any** page shows data,
+and an empty database means an empty app until `seed` runs or you add a category
+by hand. When it is unreachable the pages say which host was tried — never the
+password.
 
 ## Keeping this file honest
 

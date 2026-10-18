@@ -12,10 +12,8 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { MongoClient } from "mongodb";
+import { close, counts, describeTarget, sql } from "../server/db.ts";
 
-const URI = process.env.MONGODB_URI ?? "mongodb://127.0.0.1:27017";
-const DB = process.env.MONGODB_DB ?? "homesystem";
 const API_PORT = Number(process.env.API_PORT ?? 4000);
 const WEB_PORT = Number(process.env.PORT ?? 3000);
 
@@ -64,35 +62,54 @@ if (pnpm.status === 0) {
   add("fail", "pnpm", "not on PATH", "Install it (`mise install`, or `corepack enable pnpm`), then run `mise run setup`.");
 }
 
-// 3. Dependencies
-const needed = ["next", "react", "express", "mongodb", "recharts"];
+// 3. Configuration
+existsSync(".env")
+  ? add("ok", "Config", ".env loaded")
+  : add(
+      "warn",
+      "Config",
+      "no .env, using built-in defaults",
+      "Copy .env.example to .env to point the app at a different database or port.",
+    );
+
+// 4. Dependencies
+const needed = ["next", "react", "express", "postgres", "recharts"];
 const missing = needed.filter((p) => !existsSync(`node_modules/${p}`));
 missing.length === 0
   ? add("ok", "Dependencies", `${needed.length} key packages present`)
   : add("fail", "Dependencies", `missing ${missing.join(", ")}`, "Run `mise run setup`.");
 
-// 4. MongoDB, and 5. whether it holds anything
-const client = new MongoClient(URI, { serverSelectionTimeoutMS: 3000 });
-try {
-  await client.connect();
-  const db = client.db(DB);
-  const build = await db.admin().serverInfo();
-  add("ok", "MongoDB", `${URI} · v${build.version}`);
+// 5. Supabase, 6. the schema, and whether it holds anything
+if (!process.env.DATABASE_URL) {
+  add(
+    "fail",
+    "Supabase",
+    "DATABASE_URL is not set",
+    "Supabase dashboard → Project Settings → Database → Connection string → URI, then paste it into .env.",
+  );
+} else {
+  try {
+    const [{ version }] = await sql()`select version()`;
+    add("ok", "Supabase", `${describeTarget()} · ${version.split(" ").slice(0, 2).join(" ")}`);
 
-  const [categories, bills] = await Promise.all([
-    db.collection("categories").countDocuments({}),
-    db.collection("bills").countDocuments({}),
-  ]);
-  categories > 0
-    ? add("ok", `Database "${DB}"`, `${categories} categories, ${bills} bills`)
-    : add("warn", `Database "${DB}"`, "empty", "Run `mise run seed` to load the starter inventory and demo bills.");
-} catch (e) {
-  add("fail", "MongoDB", `cannot reach ${URI}`, `Start mongod, or set MONGODB_URI. (${e.message.split("\n")[0]})`);
-} finally {
-  await client.close().catch(() => {});
+    try {
+      const n = await counts();
+      n.categories > 0
+        ? add("ok", "Data", `${n.categories} categories, ${n.items} items, ${n.bills} bills`)
+        : add("warn", "Data", "tables are empty", "Run `mise run seed` to load the starter inventory and demo bills.");
+    } catch (e) {
+      e.code === "42P01"
+        ? add("fail", "Schema", "tables are missing", "Run `mise run migrate` to apply supabase/schema.sql.")
+        : add("fail", "Schema", e.message.split("\n")[0]);
+    }
+  } catch (e) {
+    add("fail", "Supabase", `cannot reach ${describeTarget()}`, e.message.split("\n")[0]);
+  } finally {
+    await close().catch(() => {});
+  }
 }
 
-// 6. Ports
+// 7. Ports
 const portFree = (port) =>
   new Promise((resolve) => {
     const server = createServer();

@@ -132,6 +132,60 @@ export function normalizeBill(input: unknown): { bill: Bill } | { error: string 
   };
 }
 
+export const MAX_IMPORT = 100;
+
+/**
+ * Validate one bill, or a whole import of them. An import is all-or-nothing:
+ * one bad line rejects the batch rather than leaving half of it in the
+ * database, since there is no route to delete a bill again.
+ */
+export function normalizeBills(input: unknown): { bills: Bill[] } | { error: string } {
+  if (!Array.isArray(input)) {
+    const one = normalizeBill(input);
+    return "error" in one ? one : { bills: [one.bill] };
+  }
+  if (input.length === 0) return { error: "That file has no bills in it." };
+  if (input.length > MAX_IMPORT) return { error: `No more than ${MAX_IMPORT} bills in one import.` };
+
+  const bills: Bill[] = [];
+  for (const [i, entry] of input.entries()) {
+    const one = normalizeBill(entry);
+    if ("error" in one) return { error: `Bill ${i + 1} of ${input.length}: ${one.error}` };
+    bills.push(one.bill);
+  }
+  return { bills };
+}
+
+/**
+ * The shape the importer accepts, as a copyable example. `itemId` and
+ * `category` are optional — fill them in from the inventory to tie a purchase
+ * to an item, or leave them out and the name alone will match.
+ */
+export const SAMPLE_BILLS = (date = "2026-10-01") => [
+  {
+    date,
+    store: "Reliance Fresh",
+    note: "optional",
+    items: [
+      { name: "Toor dal", qty: 1, unit: "kg", cost: 189.5, itemId: "g1", category: "Groceries" },
+      { name: "Tea leaves", qty: 250, unit: "g", cost: 132, itemId: "g5", category: "Groceries" },
+      { name: "Dish soap bar", qty: 3, unit: "pcs", cost: 66 },
+    ],
+  },
+  {
+    date,
+    store: "Local kirana",
+    items: [{ name: "Mustard oil", qty: 1, unit: "L", cost: 192 }],
+  },
+];
+
+/**
+ * The date is a parameter rather than today(): this is rendered inside a
+ * prerendered client component, and reading the clock there is an error under
+ * cacheComponents. The page passes its own (deferred) bill date in.
+ */
+export const sampleJson = (date?: string) => JSON.stringify(SAMPLE_BILLS(date), null, 2);
+
 export type PriceRef = { name: string; base: string; last: number; lastDate: string; best: number; avg: number; points: number };
 
 /** How this purchase compares with what the item has cost before. */

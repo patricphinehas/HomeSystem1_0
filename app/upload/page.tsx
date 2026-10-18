@@ -2,10 +2,20 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { CheckCircle, Plus, Receipt, TrendUp, Trash } from "@phosphor-icons/react";
+import { CheckCircle, Check, Copy, Plus, Receipt, TrendUp, Trash, UploadSimple } from "@phosphor-icons/react";
 import type { Analytics } from "@/lib/analytics";
 import { itemKey } from "@/lib/analytics";
-import { compareWithHistory, normalizeBill, today, type BillInput, type PriceRef, type StoredBill } from "@/lib/bill";
+import {
+  MAX_IMPORT,
+  compareWithHistory,
+  normalizeBill,
+  normalizeBills,
+  sampleJson,
+  today,
+  type BillInput,
+  type PriceRef,
+  type StoredBill,
+} from "@/lib/bill";
 import { inr, perUnit, pct } from "@/lib/money";
 import { COMMON_UNITS, cheapest, unitPrice } from "@/lib/units";
 import { useInventory } from "../use-inventory";
@@ -43,6 +53,7 @@ export default function EnterBill() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<{ total: number; comparisons: Comparison[] } | null>(null);
+  const [imported, setImported] = useState<Imported | null>(null);
 
   // Typing a name that exists in the inventory links the purchase to that item,
   // which is what lets the analytics page group spend by category and by tag.
@@ -331,6 +342,21 @@ export default function EnterBill() {
         </div>
       </form>
 
+      <ImportBills
+        date={date}
+        onImported={(summary) => {
+          setImported(summary);
+          setError(null);
+          reloadPrices();
+          reloadBills();
+        }}
+        onError={(message) => {
+          setImported(null);
+          setError(message);
+        }}
+        imported={imported}
+      />
+
       <Card
         title="Recent bills"
         subtitle={recent ? `${recent.bills.length} most recent` : "Loading…"}
@@ -370,3 +396,130 @@ type Comparison = {
   vsBest?: number;
   vsLast?: number;
 };
+
+type Imported = { imported: number; items: number; total: number; from: string; to: string };
+
+/**
+ * Bulk entry: a JSON file of bills, in the same shape the API already takes.
+ * The file is validated here with the same `normalizeBills` the server uses, so
+ * a malformed file names the offending bill before anything is sent.
+ */
+function ImportBills({
+  date,
+  onImported,
+  onError,
+  imported,
+}: {
+  date: string;
+  onImported: (summary: Imported) => void;
+  onError: (message: string) => void;
+  imported: Imported | null;
+}) {
+  const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const copySample = async () => {
+    await navigator.clipboard.writeText(sampleJson(date || undefined));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const upload = async (file: File) => {
+    setBusy(true);
+    try {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(await file.text());
+      } catch {
+        throw new Error(`${file.name} is not valid JSON.`);
+      }
+
+      // Same gate as the API, so the error points at the bill, not the request.
+      const check = normalizeBills(parsed);
+      if ("error" in check) throw new Error(check.error);
+
+      const res = await fetch("/api/bills", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(Array.isArray(parsed) ? parsed : [parsed]),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error || res.statusText);
+
+      onImported(body as Imported);
+    } catch (err) {
+      onError((err as Error).message || "Could not import that file.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card
+      title="Import bills from JSON"
+      subtitle={`One bill as an object, or up to ${MAX_IMPORT} as an array. Nothing is stored unless every bill in the file is valid.`}
+      aside={
+        <button
+          type="button"
+          onClick={copySample}
+          className="flex shrink-0 items-center gap-2 rounded-xl border border-border bg-surface px-3 py-1.5 text-sm transition active:scale-[0.98]"
+        >
+          {copied ? <Check size={15} className="text-accent" /> : <Copy size={15} />}
+          {copied ? "Copied" : "Copy sample"}
+        </button>
+      }
+    >
+      <div className="grid gap-3">
+        {imported && (
+          <Notice tone="accent">
+            Imported {imported.imported} bill{imported.imported > 1 ? "s" : ""} · {imported.items} items ·{" "}
+            {inr(imported.total, 2)} · {imported.from} to {imported.to}
+          </Notice>
+        )}
+
+        <label className="flex cursor-pointer flex-wrap items-center gap-3 rounded-xl border border-dashed border-border bg-bg px-4 py-4 text-sm hover:border-accent">
+          <UploadSimple size={18} className="text-muted" />
+          <span className="text-muted">{busy ? "Importing…" : "Choose a .json file of bills"}</span>
+          <input
+            type="file"
+            accept="application/json,.json"
+            disabled={busy}
+            className="sr-only"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = ""; // so the same file can be picked again after a fix
+              if (file) upload(file);
+            }}
+          />
+        </label>
+
+        <details className="text-xs text-muted">
+          <summary className="cursor-pointer select-none hover:text-fg">What the file has to contain</summary>
+          <ul className="mt-2 grid gap-1 pl-4">
+            <li>
+              <code>date</code> — yyyy-mm-dd, not in the future. Required.
+            </li>
+            <li>
+              <code>store</code> — where you bought it. Required.
+            </li>
+            <li>
+              <code>note</code> — optional, up to 500 characters.
+            </li>
+            <li>
+              <code>items[]</code> — at least one, each with <code>name</code>, <code>qty</code> (&gt; 0),{" "}
+              <code>unit</code> (kg, g, pcs, L, ml, dozen, or anything else — an unrecognised unit is priced per
+              itself) and <code>cost</code> (the line total you paid, not the per-unit price).
+            </li>
+            <li>
+              <code>items[].itemId</code> and <code>items[].category</code> — optional. Set them to an inventory item
+              id and its category to tie the purchase to that item; otherwise the name is matched on its own.
+            </li>
+          </ul>
+          <pre className="mt-3 overflow-x-auto rounded-xl border border-border bg-surface p-3 text-[11px] leading-relaxed text-fg">
+            {sampleJson(date || undefined)}
+          </pre>
+        </details>
+      </div>
+    </Card>
+  );
+}

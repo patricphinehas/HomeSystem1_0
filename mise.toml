@@ -16,24 +16,29 @@
 node = "24"
 pnpm = "12.14.0"
 
-[env]
-# The app's defaults, in one place. Point MONGODB_URI elsewhere to use a
-# different database without touching the code.
-MONGODB_URI = "mongodb://127.0.0.1:27017"
-MONGODB_DB = "homesystem"
-API_PORT = "4000"
+# Configuration lives in .env (copy .env.example), which Next loads itself and
+# every node entry point loads with --env-file-if-exists. Deliberately not
+# duplicated in an [env] block here, so there is one place to change it.
 
 [tasks.setup]
-description = "Install the pinned toolchain and the project's dependencies"
-run = ["mise install", "pnpm install"]
+description = "Install the toolchain and dependencies, and create .env if missing"
+run = [
+  "mise install",
+  "pnpm install",
+  "node -e \"require('fs').existsSync('.env') || (require('fs').copyFileSync('.env.example','.env'), console.log('created .env from .env.example'))\"",
+]
 
 [tasks.doctor]
-description = "Check the toolchain, dependencies, database and ports"
-run = "node scripts/doctor.mjs"
+description = "Check the toolchain, dependencies, configuration, database and ports"
+run = "node --env-file-if-exists=.env scripts/doctor.mjs"
+
+[tasks.migrate]
+description = "Apply supabase/schema.sql to DATABASE_URL"
+run = "node --env-file-if-exists=.env scripts/migrate.mjs"
 
 [tasks.seed]
 description = "Load the starter inventory and demo bills (pass -- --clear to replace)"
-run = "node scripts/seed.mjs"
+run = "node --env-file-if-exists=.env scripts/seed.mjs"
 
 [tasks.develop]
 description = "Run the pages on :3000 and the data API on :4000"

@@ -11,7 +11,7 @@
 
 import { normalizeBill } from "../lib/bill.ts";
 import { normalizeInventory } from "../lib/inventory.ts";
-import { bills, categories } from "../server/db.ts";
+import { applySchema, clear, close, counts, insertBills, writeInventory } from "../server/db.ts";
 import { STARTER_CATEGORIES } from "./starter-inventory.mjs";
 
 const MONTHS = 8; // ending with the current month
@@ -123,14 +123,17 @@ for (let back = MONTHS - 1; back >= 0; back--) {
   }
 }
 
-const billsCollection = await bills();
-const categoriesCollection = await categories();
+// The tables may not exist yet on a fresh Supabase project; applying the schema
+// first makes `seed` work on its own, and it is safe to re-apply.
+await applySchema();
 
+const before = await counts();
 if (process.argv.includes("--clear")) {
-  const gone = [await billsCollection.deleteMany({}), await categoriesCollection.deleteMany({})];
-  console.log(`cleared ${gone[0].deletedCount} bills and ${gone[1].deletedCount} categories`);
-} else if ((await billsCollection.countDocuments({})) + (await categoriesCollection.countDocuments({})) > 0) {
+  await clear();
+  console.log(`cleared ${before.bills} bills and ${before.categories} categories`);
+} else if (before.bills + before.categories > 0) {
   console.error("The database is not empty. Re-run with --clear to replace it.");
+  await close();
   process.exit(1);
 }
 
@@ -139,24 +142,24 @@ if (process.argv.includes("--clear")) {
 const checked = normalizeInventory({ categories: STARTER_CATEGORIES });
 if ("error" in checked) throw new Error(`starter inventory is invalid: ${checked.error}`);
 
-await categoriesCollection.insertMany(
-  checked.inventory.categories.map((c, order) => ({ _id: c.id, name: c.name, items: c.items, order })),
-);
+await writeInventory(checked.inventory);
 console.log(
   `seeded ${checked.inventory.categories.length} categories, ` +
     `${checked.inventory.categories.reduce((n, c) => n + c.items.length, 0)} items`,
 );
 
-const docs = drafts.map((draft) => {
+const seededBills = drafts.map((draft) => {
   const result = normalizeBill(draft);
   if ("error" in result) throw new Error(`seed produced an invalid bill: ${result.error}`);
-  return { ...result.bill, createdAt: new Date(`${draft.date}T12:00:00Z`) };
+  return result.bill;
 });
 
-await billsCollection.insertMany(docs);
-const total = docs.reduce((t, d) => t + d.total, 0);
+await insertBills(seededBills);
+const total = seededBills.reduce((t, b) => t + b.total, 0);
 console.log(
-  `seeded ${docs.length} bills, ${docs.reduce((n, d) => n + d.items.length, 0)} lines, ` +
-    `${docs[0].date} to ${docs[docs.length - 1].date}, total ₹${Math.round(total).toLocaleString("en-IN")}`,
+  `seeded ${seededBills.length} bills, ${seededBills.reduce((n, b) => n + b.items.length, 0)} lines, ` +
+    `${seededBills[0].date} to ${seededBills[seededBills.length - 1].date}, ` +
+    `total ₹${Math.round(total).toLocaleString("en-IN")}`,
 );
-process.exit(0);
+
+await close();
