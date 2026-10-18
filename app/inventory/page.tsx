@@ -403,13 +403,33 @@ function ItemRow({
       >
         <Trash size={15} />
       </button>
-      <div className="w-full pl-6">
+      <div className="grid w-full gap-2 pl-6">
         <TagEditor
           label={item.name}
           tags={item.tags ?? []}
           suggestions={tagSuggestions}
           onChange={(tags) => onChange({ ...item, tags })}
         />
+        <TagEditor
+          label="Bill aliases"
+          tags={item.aliases ?? []}
+          onChange={(aliases) => onChange({ ...item, aliases })}
+        />
+        <label className="grid gap-1 text-xs text-muted">
+          Match patterns (regex, comma-separated)
+          <input
+            value={(item.patterns ?? []).join(", ")}
+            onChange={(e) => {
+              const patterns = e.target.value
+                .split(",")
+                .map((p) => p.trim())
+                .filter(Boolean);
+              onChange({ ...item, patterns: patterns.length ? patterns : undefined });
+            }}
+            placeholder="tea\s*leaves?, britannia"
+            className="rounded-xl border border-border bg-surface px-3 py-1.5 text-sm text-fg placeholder:text-muted"
+          />
+        </label>
       </div>
     </li>
   );

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { analyse, groupSpend, type Analytics } from "@/lib/analytics";
+import { analyse, groupSpend, monthOf, type Analytics } from "@/lib/analytics";
 import { tagIndex } from "@/lib/inventory";
 import { inr, pct } from "@/lib/money";
 import { useInventory } from "../use-inventory";
@@ -24,21 +24,36 @@ const cutoff = (months: number) => {
   return d.toISOString().slice(0, 10);
 };
 
+type RangeFilter =
+  | { kind: "preset"; id: string }
+  | { kind: "month"; value: string }
+  | { kind: "year"; value: string };
+
+function filterLines(lines: Analytics["lines"], filter: RangeFilter) {
+  if (filter.kind === "month") return lines.filter((l) => monthOf(l.date) === filter.value);
+  if (filter.kind === "year") return lines.filter((l) => l.date.startsWith(`${filter.value}-`));
+  const months = RANGES.find((r) => r.id === filter.id)?.months ?? 0;
+  const from = cutoff(months);
+  return lines.filter((l) => l.date >= from);
+}
+
 export default function AnalyticsPage() {
   const { data, error } = useJson<Analytics>("/api/analytics");
   const { inv } = useInventory();
-  const [range, setRange] = useState("all");
+  const [filter, setFilter] = useState<RangeFilter>({ kind: "preset", id: "all" });
   const [dimension, setDimension] = useState<"category" | "tag">("category");
 
-  const months = RANGES.find((r) => r.id === range)!.months;
+  const years = useMemo(() => {
+    if (!data?.lines.length) return [];
+    return [...new Set(data.lines.map((l) => l.date.slice(0, 4)))].sort().reverse();
+  }, [data]);
 
   // The route hands over the purchase lines, so every stat on this page is
   // recomputed from the same filtered set - the numbers can't disagree.
   const report = useMemo(() => {
     if (!data) return null;
-    const from = cutoff(months);
-    return analyse(data.lines.filter((l) => l.date >= from));
-  }, [data, months]);
+    return analyse(filterLines(data.lines, filter));
+  }, [data, filter]);
 
   // Tags live in the inventory file, not in the bills, so grouping by tag is a
   // join done here: current tags, not whatever was true at purchase time.
@@ -82,15 +97,15 @@ export default function AnalyticsPage() {
         <>
           {/* One filter row, scoping everything below it. */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border pb-4">
-            <div role="group" aria-label="Date range" className="flex flex-wrap gap-1.5">
+            <div role="group" aria-label="Date range" className="flex flex-wrap items-center gap-1.5">
               {RANGES.map((r) => (
                 <button
                   key={r.id}
                   type="button"
-                  aria-pressed={range === r.id}
-                  onClick={() => setRange(r.id)}
+                  aria-pressed={filter.kind === "preset" && filter.id === r.id}
+                  onClick={() => setFilter({ kind: "preset", id: r.id })}
                   className={`rounded-xl px-3 py-1.5 text-sm transition active:scale-[0.98] ${
-                    range === r.id
+                    filter.kind === "preset" && filter.id === r.id
                       ? "bg-accent-soft font-medium text-accent"
                       : "border border-border bg-surface text-muted hover:text-fg"
                   }`}
@@ -98,6 +113,41 @@ export default function AnalyticsPage() {
                   {r.label}
                 </button>
               ))}
+              <span className="mx-1 hidden text-muted sm:inline">·</span>
+              <label className="flex items-center gap-1.5 text-sm text-muted">
+                Month
+                <input
+                  type="month"
+                  value={filter.kind === "month" ? filter.value : ""}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    if (value) setFilter({ kind: "month", value });
+                  }}
+                  className={`rounded-xl border bg-surface px-2 py-1.5 text-sm text-fg ${
+                    filter.kind === "month" ? "border-accent" : "border-border"
+                  }`}
+                />
+              </label>
+              <label className="flex items-center gap-1.5 text-sm text-muted">
+                Year
+                <select
+                  value={filter.kind === "year" ? filter.value : ""}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    if (value) setFilter({ kind: "year", value });
+                  }}
+                  className={`rounded-xl border bg-surface px-2 py-1.5 text-sm text-fg ${
+                    filter.kind === "year" ? "border-accent" : "border-border"
+                  }`}
+                >
+                  <option value="">—</option>
+                  {years.map((y) => (
+                    <option key={y} value={y}>
+                      {y}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
             <div role="group" aria-label="Group spend by" className="ml-auto flex items-center gap-1.5 text-xs text-muted">
               Break down by

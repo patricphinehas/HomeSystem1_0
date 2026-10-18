@@ -2,8 +2,8 @@
  * Seeds the database: the starter inventory, and demo bills so the analytics
  * page has something to show before you have entered months of real shopping.
  *
- *   node scripts/seed.mjs          seed empty collections (refuses a full one)
- *   node scripts/seed.mjs --clear  wipe both collections first
+ *   node scripts/seed.mjs          seed an empty database (refuses a full one)
+ *   node scripts/seed.mjs --clear  wipe the tables first
  *
  * The inventory is real starter data. The prices on the demo bills are
  * invented, and every demo bill is noted as such.

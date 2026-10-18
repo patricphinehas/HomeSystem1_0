@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChartLine, House, Package, Receipt } from "@phosphor-icons/react";
+import { ChartLine, House, Package, Receipt, Repeat } from "@phosphor-icons/react";
 
 const links = [
   { href: "/", label: "Overview", icon: House },
   { href: "/inventory", label: "Inventory management", icon: Package },
+  { href: "/subscriptions", label: "Subscriptions", icon: Repeat },
   { href: "/upload", label: "Enter bill", icon: Receipt },
   { href: "/analytics", label: "Analytics", icon: ChartLine },
 ];

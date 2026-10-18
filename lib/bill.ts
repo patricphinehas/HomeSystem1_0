@@ -44,7 +44,7 @@ export type Bill = {
   items: BillLine[];
 };
 
-/** A bill as it comes back out of Mongo. */
+/** A bill as it comes back out of the database. */
 export type StoredBill = Bill & { id: string; createdAt: string };
 
 export const MAX_LINES = 200;
@@ -154,6 +154,18 @@ export function normalizeBills(input: unknown): { bills: Bill[] } | { error: str
     bills.push(one.bill);
   }
   return { bills };
+}
+
+/** Parse import JSON and run the same schema checks as {@link normalizeBills}. */
+export function validateImportJson(
+  raw: string,
+  invalidJson = "Not valid JSON.",
+): { bills: Bill[] } | { error: string } {
+  try {
+    return normalizeBills(JSON.parse(raw));
+  } catch {
+    return { error: invalidJson };
+  }
 }
 
 /**

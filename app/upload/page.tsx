@@ -2,14 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { CheckCircle, Check, Copy, Plus, Receipt, TrendUp, Trash, UploadSimple } from "@phosphor-icons/react";
+import { CheckCircle, Check, ClipboardText, Copy, Plus, Receipt, TrendUp, Trash, UploadSimple } from "@phosphor-icons/react";
 import type { Analytics } from "@/lib/analytics";
 import { itemKey } from "@/lib/analytics";
 import {
   MAX_IMPORT,
   compareWithHistory,
   normalizeBill,
-  normalizeBills,
+  validateImportJson,
   sampleJson,
   today,
   type BillInput,
@@ -18,6 +18,10 @@ import {
 } from "@/lib/bill";
 import { inr, perUnit, pct } from "@/lib/money";
 import { COMMON_UNITS, cheapest, unitPrice } from "@/lib/units";
+import { applyInventoryMatch, matchInventoryLine, unmatchedImportLines } from "@/lib/match-inventory";
+import type { Inventory } from "@/lib/inventory";
+import { BillDetail } from "../bill-detail";
+import { ImportMapDialog } from "../import-map-dialog";
 import { useInventory } from "../use-inventory";
 import { useJson } from "../use-api";
 import { Card, Notice } from "../ui";
@@ -38,7 +42,7 @@ const VERDICT: Record<Verdict, { label: (p: { vsLast?: number; vsBest?: number }
 };
 
 export default function EnterBill() {
-  const { inv } = useInventory();
+  const { inv, save: saveInventory } = useInventory();
   const { data: analytics, reload: reloadPrices } = useJson<Analytics>("/api/analytics");
   const { data: recent, error: recentError, reload: reloadBills } = useJson<{ bills: StoredBill[] }>("/api/bills?limit=8");
 
@@ -54,15 +58,16 @@ export default function EnterBill() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<{ total: number; comparisons: Comparison[] } | null>(null);
   const [imported, setImported] = useState<Imported | null>(null);
+  const [viewBill, setViewBill] = useState<StoredBill | null>(null);
 
-  // Typing a name that exists in the inventory links the purchase to that item,
-  // which is what lets the analytics page group spend by category and by tag.
-  const known = useMemo(() => {
-    const map = new Map<string, { itemId: string; category: string; unit: string }>();
-    for (const c of inv?.categories ?? [])
-      for (const i of c.items) map.set(itemKey(i.name), { itemId: i.id, category: c.name, unit: i.unit });
-    return map;
-  }, [inv]);
+  const inventory = inv ?? { categories: [] };
+
+  const linkName = (name: string) => {
+    const hit = matchInventoryLine(name, inventory);
+    if (!hit) return undefined;
+    const item = inventory.categories.flatMap((c) => c.items).find((i) => i.id === hit.itemId);
+    return { itemId: hit.itemId, category: hit.category, unit: item?.unit ?? "kg" };
+  };
 
   const names = useMemo(
     () => (inv?.categories ?? []).flatMap((c) => c.items.map((i) => i.name)).sort(),
@@ -70,11 +75,16 @@ export default function EnterBill() {
   );
 
   const priceBook = (analytics?.priceBook ?? {}) as Record<string, PriceRef>;
-  const units = [...new Set([...COMMON_UNITS, ...[...known.values()].map((k) => k.unit)])];
+  const units = [
+    ...new Set([
+      ...COMMON_UNITS,
+      ...inventory.categories.flatMap((c) => c.items.map((i) => i.unit)),
+    ]),
+  ];
   const stores = [...new Set((recent?.bills ?? []).map((b) => b.store))];
 
   const priced = rows.map((row) => {
-    const match = known.get(itemKey(row.name));
+    const match = linkName(row.name);
     const price = unitPrice(Number(row.qty), row.unit, Number(row.cost));
     return { row, match, price, cost: Number(row.cost) || 0 };
   });
@@ -96,7 +106,7 @@ export default function EnterBill() {
     setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...next } : r)));
 
   const onName = (id: number, name: string) => {
-    const match = known.get(itemKey(name));
+    const match = linkName(name);
     // Adopt the inventory's unit for a known item, unless the row was edited.
     patch(id, match ? { name, unit: match.unit } : { name });
   };
@@ -110,7 +120,7 @@ export default function EnterBill() {
       store,
       note,
       items: filled.map(({ name, qty, unit, cost }) => {
-        const match = known.get(itemKey(name));
+        const match = linkName(name);
         return { name, qty, unit, cost, itemId: match?.itemId ?? null, category: match?.category ?? null };
       }),
     };
@@ -152,6 +162,26 @@ export default function EnterBill() {
       </header>
 
       {error && <Notice>{error}</Notice>}
+
+      <ImportBills
+        date={date}
+        inv={inv}
+        onSaveInventory={saveInventory}
+        onImported={(summary) => {
+          setImported(summary);
+          setError(null);
+          reloadPrices();
+          reloadBills();
+        }}
+        onError={(message) => {
+          setImported(null);
+          setError(message);
+        }}
+        imported={imported}
+      />
+
+      {viewBill && <BillDetail bill={viewBill} onClose={() => setViewBill(null)} />}
+
       {saved && (
         <Card
           title="Bill saved"
@@ -342,21 +372,6 @@ export default function EnterBill() {
         </div>
       </form>
 
-      <ImportBills
-        date={date}
-        onImported={(summary) => {
-          setImported(summary);
-          setError(null);
-          reloadPrices();
-          reloadBills();
-        }}
-        onError={(message) => {
-          setImported(null);
-          setError(message);
-        }}
-        imported={imported}
-      />
-
       <Card
         title="Recent bills"
         subtitle={recent ? `${recent.bills.length} most recent` : "Loading…"}
@@ -371,14 +386,20 @@ export default function EnterBill() {
         {recent && recent.bills.length > 0 && (
           <ul className="divide-y divide-border">
             {recent.bills.map((bill) => (
-              <li key={bill.id} className="flex flex-wrap items-baseline justify-between gap-2 py-2 text-sm first:pt-0">
-                <span>
-                  {bill.store}
-                  <span className="ml-2 text-xs text-muted">
-                    {bill.date} · {bill.items.length} items
+              <li key={bill.id} className="first:pt-0">
+                <button
+                  type="button"
+                  onClick={() => setViewBill(bill)}
+                  className="flex w-full flex-wrap items-baseline justify-between gap-2 rounded-lg py-2 text-left text-sm transition hover:bg-bg"
+                >
+                  <span>
+                    {bill.store}
+                    <span className="ml-2 text-xs text-muted">
+                      {bill.date} · {bill.items.length} items
+                    </span>
                   </span>
-                </span>
-                <span className="font-mono text-xs tabular-nums">{inr(bill.total, 2)}</span>
+                  <span className="font-mono text-xs tabular-nums">{inr(bill.total, 2)}</span>
+                </button>
               </li>
             ))}
           </ul>
@@ -406,17 +427,24 @@ type Imported = { imported: number; items: number; total: number; from: string; 
  */
 function ImportBills({
   date,
+  inv,
+  onSaveInventory,
   onImported,
   onError,
   imported,
 }: {
   date: string;
+  inv: Inventory | null;
+  onSaveInventory: (next: Inventory) => void;
   onImported: (summary: Imported) => void;
   onError: (message: string) => void;
   imported: Imported | null;
 }) {
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [paste, setPaste] = useState("");
+  const [mapBills, setMapBills] = useState<BillInput[] | null>(null);
+  const [batchImport, setBatchImport] = useState(true);
 
   const copySample = async () => {
     await navigator.clipboard.writeText(sampleJson(date || undefined));
@@ -424,37 +452,88 @@ function ImportBills({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const upload = async (file: File) => {
+  const pasteSchema = useMemo(() => {
+    const raw = paste.trim();
+    if (!raw) return null;
+    const check = validateImportJson(raw, "Pasted text is not valid JSON.");
+    if ("error" in check) return { ok: false as const, error: check.error };
+    const items = check.bills.reduce((n, b) => n + b.items.length, 0);
+    return { ok: true as const, bills: check.bills.length, items };
+  }, [paste]);
+
+  const pasteFromClipboard = async () => {
+    try {
+      setPaste(await navigator.clipboard.readText());
+    } catch {
+      onError("Could not read the clipboard. Paste into the box manually, or allow clipboard access.");
+    }
+  };
+
+  const postBills = async (inputs: BillInput[], asArray: boolean, nextInv: Inventory | null) => {
+    if (nextInv) onSaveInventory(nextInv);
     setBusy(true);
     try {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(await file.text());
-      } catch {
-        throw new Error(`${file.name} is not valid JSON.`);
-      }
-
-      // Same gate as the API, so the error points at the bill, not the request.
-      const check = normalizeBills(parsed);
-      if ("error" in check) throw new Error(check.error);
-
       const res = await fetch("/api/bills", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(Array.isArray(parsed) ? parsed : [parsed]),
+        body: JSON.stringify(asArray ? inputs : inputs[0]),
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error || res.statusText);
 
       onImported(body as Imported);
+      setPaste("");
+      setMapBills(null);
     } catch (err) {
-      onError((err as Error).message || "Could not import that file.");
+      onError((err as Error).message || "Could not import that JSON.");
     } finally {
       setBusy(false);
     }
   };
 
+  const beginImport = (raw: string, invalidMessage: string) => {
+    const trimmed = raw.trim();
+    const check = validateImportJson(trimmed, invalidMessage);
+    if ("error" in check) {
+      onError(check.error);
+      return;
+    }
+
+    const parsed: unknown = JSON.parse(trimmed);
+    const asArray = Array.isArray(parsed);
+    const inputs = (asArray ? parsed : [parsed]) as BillInput[];
+    const inventory = inv ?? { categories: [] };
+
+    const unmatched = unmatchedImportLines(inputs, inventory);
+
+    setBatchImport(asArray);
+    if (unmatched.size > 0) {
+      if (!inv) {
+        onError("Inventory is still loading. Try the import again in a moment.");
+        return;
+      }
+      setMapBills(inputs);
+      return;
+    }
+    void postBills(applyInventoryMatch(inputs, inventory), asArray, null);
+  };
+
+  const submitJson = (raw: string, invalidMessage: string) => beginImport(raw, invalidMessage);
+
+  const upload = async (file: File) => {
+    await submitJson(await file.text(), `${file.name} is not valid JSON.`);
+  };
+
   return (
+    <>
+      {mapBills && inv && (
+        <ImportMapDialog
+          bills={mapBills}
+          inv={inv}
+          onCancel={() => setMapBills(null)}
+          onConfirm={(mapped, nextInv) => void postBills(mapped, batchImport, nextInv)}
+        />
+      )}
     <Card
       title="Import bills from JSON"
       subtitle={`One bill as an object, or up to ${MAX_IMPORT} as an array. Nothing is stored unless every bill in the file is valid.`}
@@ -477,21 +556,81 @@ function ImportBills({
           </Notice>
         )}
 
-        <label className="flex cursor-pointer flex-wrap items-center gap-3 rounded-xl border border-dashed border-border bg-bg px-4 py-4 text-sm hover:border-accent">
-          <UploadSimple size={18} className="text-muted" />
-          <span className="text-muted">{busy ? "Importing…" : "Choose a .json file of bills"}</span>
-          <input
-            type="file"
-            accept="application/json,.json"
+        <div
+          className="grid gap-3 rounded-xl border border-dashed border-border bg-bg p-4"
+          onPaste={(e) => {
+            const text = e.clipboardData.getData("text");
+            if (text.trim()) {
+              e.preventDefault();
+              setPaste(text);
+            }
+          }}
+        >
+          <p className="text-sm text-fg">
+            Upload a <code className="text-xs">.json</code> file, paste from the clipboard, or edit JSON below. Lines are
+            matched to inventory by name, alias, or regex pattern; anything else can be mapped before import.
+          </p>
+
+          <div className="flex flex-wrap gap-2">
+            <label className="flex cursor-pointer items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2 text-sm text-fg transition hover:border-accent active:scale-[0.98]">
+              <UploadSimple size={18} className="text-muted" />
+              {busy ? "Importing…" : "Choose file"}
+              <input
+                type="file"
+                accept="application/json,.json"
+                disabled={busy}
+                className="sr-only"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) void upload(file);
+                }}
+              />
+            </label>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void pasteFromClipboard()}
+              className="flex items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2 text-sm text-fg transition hover:border-accent active:scale-[0.98] disabled:opacity-40"
+            >
+              <ClipboardText size={18} />
+              Paste from clipboard
+            </button>
+            <button
+              type="button"
+              disabled={busy || !pasteSchema?.ok}
+              onClick={() => void submitJson(paste.trim(), "Pasted text is not valid JSON.")}
+              className="flex items-center gap-2 rounded-xl bg-accent px-3 py-2 text-sm font-medium text-surface transition active:scale-[0.98] disabled:opacity-40"
+            >
+              <UploadSimple size={18} weight="bold" />
+              {busy ? "Importing…" : "Import JSON"}
+            </button>
+          </div>
+
+          <textarea
+            value={paste}
+            onChange={(e) => setPaste(e.target.value)}
             disabled={busy}
-            className="sr-only"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.target.value = ""; // so the same file can be picked again after a fix
-              if (file) upload(file);
-            }}
+            rows={6}
+            spellCheck={false}
+            aria-label="Bill import JSON"
+            placeholder='[{"date":"2026-10-01","store":"…","items":[{"name":"…","qty":1,"unit":"kg","cost":100}]}]'
+            className="min-h-32 w-full resize-y rounded-xl border border-border bg-surface px-3 py-2 font-mono text-xs leading-relaxed text-fg placeholder:text-muted"
           />
-        </label>
+
+          {pasteSchema ? (
+            pasteSchema.ok ? (
+              <Notice tone="accent">
+                Schema OK — {pasteSchema.bills} bill{pasteSchema.bills > 1 ? "s" : ""}, {pasteSchema.items} item
+                {pasteSchema.items !== 1 ? "s" : ""}
+              </Notice>
+            ) : (
+              <Notice>{pasteSchema.error}</Notice>
+            )
+          ) : (
+            <p className="text-xs text-muted">Paste or type JSON here — validation runs as you edit.</p>
+          )}
+        </div>
 
         <details className="text-xs text-muted">
           <summary className="cursor-pointer select-none hover:text-fg">What the file has to contain</summary>
@@ -511,8 +650,8 @@ function ImportBills({
               itself) and <code>cost</code> (the line total you paid, not the per-unit price).
             </li>
             <li>
-              <code>items[].itemId</code> and <code>items[].category</code> — optional. Set them to an inventory item
-              id and its category to tie the purchase to that item; otherwise the name is matched on its own.
+              <code>items[].itemId</code> — optional explicit link. Otherwise names match inventory items, their{" "}
+              <code>aliases</code>, or <code>patterns</code> (regex). Unmatched lines can be mapped on import.
             </li>
           </ul>
           <pre className="mt-3 overflow-x-auto rounded-xl border border-border bg-surface p-3 text-[11px] leading-relaxed text-fg">
@@ -521,5 +660,6 @@ function ImportBills({
         </details>
       </div>
     </Card>
+    </>
   );
 }

@@ -9,9 +9,23 @@ import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import type { Bill, BillLine, StoredBill } from "../lib/bill.ts";
 import type { Category, Inventory, Item } from "../lib/inventory.ts";
+import type { Subscription, SubscriptionsDoc } from "../lib/subscriptions.ts";
 import type { Line } from "../lib/analytics.ts";
 
 const CONNECTION = process.env.DATABASE_URL ?? "";
+
+/**
+ * Supavisor transaction mode (port 6543, the pooled string in .env.example)
+ * drops named prepared statements between transactions. Those connections use
+ * unnamed statements. A direct connection on 5432 keeps prepared statements.
+ */
+const transactionPooler = (url: string) => {
+  try {
+    return new URL(url).port === "6543";
+  } catch {
+    return false;
+  }
+};
 
 /** Reported by the API and by `doctor`, with the password never echoed. */
 export const describeTarget = () => {
@@ -37,7 +51,13 @@ export const sql = (): postgres.Sql => {
   if (!CONNECTION) throw new NotConfigured();
   // Supabase requires TLS; its pooler presents a certificate the default
   // verification rejects, which is why the hosted docs use sslmode=require.
-  client ??= postgres(CONNECTION, { ssl: "require", max: 4, idle_timeout: 20, connect_timeout: 10 });
+  client ??= postgres(CONNECTION, {
+    ssl: "require",
+    max: 4,
+    idle_timeout: 20,
+    connect_timeout: 10,
+    prepare: !transactionPooler(CONNECTION),
+  });
   return client;
 };
 
@@ -57,13 +77,15 @@ type ItemRow = {
   unit: string;
   min: string;
   tags: string[];
+  aliases: string[];
+  patterns: string[];
 };
 
 export async function readInventory(): Promise<Inventory> {
   const db = sql();
   const [categories, items] = await Promise.all([
     db<{ id: string; name: string }[]>`select id, name from categories order by position, id`,
-    db<ItemRow[]>`select id, category_id, name, room, qty, unit, min, tags from items order by category_id, position, id`,
+    db<ItemRow[]>`select id, category_id, name, room, qty, unit, min, tags, aliases, patterns from items order by category_id, position, id`,
   ]);
 
   const byCategory = new Map<string, Item[]>();
@@ -76,6 +98,8 @@ export async function readInventory(): Promise<Inventory> {
       unit: row.unit,
       min: Number(row.min),
       ...(row.tags.length ? { tags: row.tags } : {}),
+      ...(row.aliases?.length ? { aliases: row.aliases } : {}),
+      ...(row.patterns?.length ? { patterns: row.patterns } : {}),
     };
     byCategory.set(row.category_id, [...(byCategory.get(row.category_id) ?? []), item]);
   }
@@ -118,6 +142,8 @@ export async function writeInventory(inventory: Inventory): Promise<void> {
             unit: item.unit,
             min: item.min,
             tags: item.tags ?? [],
+            aliases: item.aliases ?? [],
+            patterns: item.patterns ?? [],
             position,
           })}
           on conflict (id) do update set
@@ -128,6 +154,8 @@ export async function writeInventory(inventory: Inventory): Promise<void> {
             unit = excluded.unit,
             min = excluded.min,
             tags = excluded.tags,
+            aliases = excluded.aliases,
+            patterns = excluded.patterns,
             position = excluded.position
         `;
       }
@@ -135,6 +163,64 @@ export async function writeInventory(inventory: Inventory): Promise<void> {
 
     await tx`delete from items ${itemIds.length ? tx`where id <> all(${itemIds})` : tx``}`;
     await tx`delete from categories ${categoryIds.length ? tx`where id <> all(${categoryIds})` : tx``}`;
+  });
+}
+
+/* ---------------- subscriptions ---------------- */
+
+type SubscriptionRow = {
+  id: string;
+  name: string;
+  type: string;
+  tag: string;
+  holder: string;
+  shareable: boolean;
+  share_count: number | null;
+};
+
+export async function readSubscriptions(): Promise<SubscriptionsDoc> {
+  const rows = await sql()<SubscriptionRow[]>`
+    select id, name, type, tag, holder, shareable, share_count from subscriptions order by position, id
+  `;
+  return {
+    subscriptions: rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      type: r.type,
+      tag: r.tag,
+      holder: r.holder,
+      shareable: r.shareable,
+      shareCount: r.share_count,
+    })),
+  };
+}
+
+export async function writeSubscriptions(doc: SubscriptionsDoc): Promise<void> {
+  await sql().begin(async (tx) => {
+    const ids = doc.subscriptions.map((s) => s.id);
+    for (const [position, sub] of doc.subscriptions.entries()) {
+      await tx`
+        insert into subscriptions ${tx({
+          id: sub.id,
+          name: sub.name,
+          type: sub.type,
+          tag: sub.tag,
+          holder: sub.holder,
+          shareable: sub.shareable,
+          share_count: sub.shareCount,
+          position,
+        })}
+        on conflict (id) do update set
+          name = excluded.name,
+          type = excluded.type,
+          tag = excluded.tag,
+          holder = excluded.holder,
+          shareable = excluded.shareable,
+          share_count = excluded.share_count,
+          position = excluded.position
+      `;
+    }
+    await tx`delete from subscriptions ${ids.length ? tx`where id <> all(${ids})` : tx``}`;
   });
 }
 
@@ -260,7 +346,7 @@ export async function readBills(limit: number): Promise<StoredBill[]> {
 /** Empties every table. Used only by `seed --clear`. */
 export async function clear(): Promise<void> {
   // bill_items and items go with their parents through the cascade.
-  await sql()`truncate bills, categories cascade`;
+  await sql()`truncate bills, categories, subscriptions cascade`;
 }
 
 export async function counts(): Promise<{ categories: number; items: number; bills: number }> {

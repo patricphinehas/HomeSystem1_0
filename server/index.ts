@@ -6,6 +6,8 @@
  *   POST /api/bills       store one bill, or import an array of them
  *   GET  /api/bills       recent bills, newest first
  *   GET  /api/analytics   spend, projection, deviation and inflation
+ *   GET  /api/subscriptions   household subscriptions
+ *   PUT  /api/subscriptions   replace subscriptions
  *
  * Next.js rewrites all of these here (see next.config.ts), so the browser only
  * ever talks to one origin and there is no CORS configuration anywhere.
@@ -19,6 +21,7 @@ import { analyse, itemKey, priceBook, priceHistory } from "../lib/analytics.ts";
 import { compareWithHistory, normalizeBills } from "../lib/bill.ts";
 import type { PriceRef } from "../lib/bill.ts";
 import { normalizeInventory } from "../lib/inventory.ts";
+import { normalizeSubscriptions } from "../lib/subscriptions.ts";
 import {
   NotConfigured,
   describeTarget,
@@ -26,7 +29,9 @@ import {
   readBills,
   readInventory,
   readLines,
+  readSubscriptions,
   writeInventory,
+  writeSubscriptions,
 } from "./db.ts";
 
 const app = express();
@@ -87,6 +92,17 @@ app.get("/api/bills", async (req, res) => {
 
 app.get("/api/analytics", async (_req, res) => {
   res.json(analyse(await readLines()));
+});
+
+app.get("/api/subscriptions", async (_req, res) => {
+  res.json(await readSubscriptions());
+});
+
+app.put("/api/subscriptions", async (req, res) => {
+  const result = normalizeSubscriptions(req.body);
+  if ("error" in result) return res.status(400).json({ error: result.error });
+  await writeSubscriptions(result.doc);
+  res.json({ ok: true, count: result.doc.subscriptions.length });
 });
 
 // An unreachable or unconfigured database is the expected failure here, and it

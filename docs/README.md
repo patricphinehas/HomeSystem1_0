@@ -35,18 +35,19 @@ Next.js 16 conventions used here that differ from older versions: `cacheComponen
 ## Configuration
 
 `.env` (a copy of `.env.example`, which is the one `.env*` file git keeps) holds
-`MONGODB_URI`, `MONGODB_DB`, `API_PORT` and `API_URL`. Next loads it itself; every
-node entry point loads it with `--env-file-if-exists=.env`, so the API, the seed
-and the doctor all see the same values. Each one also has the same default in
-code, so a missing `.env` still runs — `mise run doctor` reports which of the two
-is in effect. It is deliberately *not* duplicated in an `[env]` block in
-`mise.toml`: one place to change it.
+`DATABASE_URL`, `API_PORT` and `API_URL`. Next loads it itself; every node entry
+point loads it with `--env-file-if-exists=.env`, so the API, the seed and the
+doctor all see the same values. It is deliberately *not* duplicated in an
+`[env]` block in `mise.toml`: one place to change it.
 
 `DATABASE_URL` is the only required value and the app will not serve data
 without it — `mise run doctor` fails loudly rather than the pages failing
-quietly. Use the pooled connection string for a long-running server; the direct
-`:5432` one works too. The password must be URL-encoded if it contains
-`@ : / ? # %`.
+quietly. `API_PORT` and `API_URL` have defaults in code, so a missing `.env`
+still starts the processes; they just have nowhere to read from. Use the pooled
+connection string (transaction mode, port 6543) for a long-running server; the
+direct `:5432` one works too. The password must be URL-encoded if it contains
+`@ : / ? # %`. The server turns named prepared statements off for port 6543,
+because Supavisor transaction mode drops them between queries.
 
 The Supabase publishable and service-role keys are listed in `.env.example` but
 unused: the server connects with the database password, not through PostgREST.
@@ -99,7 +100,7 @@ lib/
   bill.ts               bill shape, validation, price comparison
   analytics.ts          spend, projection, deviation, inflation, index, per-item report
   money.ts              rupee and percentage formatting
-  *.test.ts             28 tests over the five lib modules
+  *.test.ts             31 tests over the five lib modules
 server/
   index.ts              the five Express routes
   db.ts                 the Postgres connection and every query
@@ -124,7 +125,7 @@ Five routes. All maths and validation lives in `lib/` as pure functions; `server
 
 **`GET /api/inventory`** — `{ categories: [{ id, name, items }] }`, ordered by the stored `order` field.
 
-**`PUT /api/inventory`** — the whole inventory document. Validated by `normalizeInventory` (ids present, unique and short; names and rooms length-capped but allowed to be blank, because the UI saves on every keystroke; quantities and minimums finite and >= 0; tags cleaned, deduped and capped at 8). Stored as a `bulkWrite`: every category upserted with its position, then any category not in the payload deleted. A rejected payload changes nothing.
+**`PUT /api/inventory`** — the whole inventory document. Validated by `normalizeInventory` (ids present, unique and short; names and rooms length-capped but allowed to be blank, because the UI saves on every keystroke; quantities and minimums finite and >= 0; tags cleaned, deduped and capped at 8). Stored in one transaction: every category and item upserted with its position, then anything not in the payload deleted. A rejected payload never reaches the database.
 
 **`POST /api/bills`** — body `{ date, store, note?, items: [{ name, itemId?, category?, qty, unit, cost }] }`.
 Validates through `normalizeBill` (the only gate: date format and not in the future, shop present, 1–200 lines, every line named, quantity > 0, cost >= 0), stores the bill, and answers `201` with the stored bill plus a `comparisons` array saying, per line, whether this was the **best** price yet, **cheaper**, the **same**, **pricier**, or a **new** item.
@@ -145,7 +146,7 @@ Failure modes: `400` with a human message for a bad bill or unparseable body; `5
 
 **Analytics** fetches `/api/analytics` once and then recomputes the whole report **in the browser** from the returned `lines` whenever the date filter changes, by calling the same `analyse()` the server called. One code path, no refetch, and the stat tiles can't disagree with the charts.
 
-**Tags** live on inventory items, not on bills. Grouping spend by tag is a join done on the client between `lines[].itemId` and the current inventory (two collections, joined in the browser rather than with a `$lookup`, because the page already holds both) — so re-tagging an item immediately changes the history, which is the point of tagging things after the fact. An item can carry several tags, so tag shares overlap; the card says so.
+**Tags** live on inventory items, not on bills. Grouping spend by tag is a join done on the client between `lines[].itemId` and the current inventory — the page already holds both — so re-tagging an item immediately changes the history, which is the point of tagging things after the fact. An item can carry several tags, so tag shares overlap; the card says so.
 
 ## The price maths
 
@@ -243,9 +244,11 @@ small dot is still catchable.
 
 **Seed data.** Groceries, Cleaning, Bath & utilities, Games, Stationery, Wellness & health — 28 items with rooms, units and minimums.
 
+**Phase 12 — Supabase.** MongoDB replaced by Postgres. Four tables in `supabase/schema.sql` (`categories`, `items`, `bills`, `bill_items`), every query in `server/db.ts` on the `postgres` driver, `PUT /api/inventory` as one transaction with explicit `position` columns, row-level security enabled with no policies, and `bill_items.item_id` left without a foreign key so deleting an item keeps its purchase history. Migrate, seed and doctor moved with it; the `mongodb` dependency is gone. The pricing logic in `lib/` was not changed. The direct `db.*` host is IPv6-only and does not resolve from this machine, so `.env` uses the transaction pooler in ap-northeast-2 (port 6543). Schema applied there on 2026-10-18; the tables were empty afterwards.
+
 ## Where the numbers come from
 
-Audited on 2026-10-18, two ways.
+Audited on 2026-10-18 against MongoDB, before the cutover to Postgres. The client fetches and `lib/` have not changed since, so the static half — no mock data in the pages — still describes the app. The empirical half has not been repeated against Supabase: `server/db.ts` has never executed a query. The write-up below is the record of that Mongo check, not a verification of the current database.
 
 **Statically.** The only `fetch` calls in the client are `/api/inventory`
 (`use-inventory.ts`), `/api/analytics` and `/api/bills` (`use-api.ts`,
@@ -274,6 +277,7 @@ once at seed time and never again.
 
 ## Known issues
 
+- **The API routes have not been exercised against Supabase yet.** Migrate and doctor have run (PostgreSQL 17.11, schema present, tables empty). Seed, and a restart of the data API so it reloads `.env`, are still outstanding. The process already listening on port 4000 was started before the pooler URL was set.
 - **Phone-width layout is unverified below 500px.** Headless Chrome on Windows clamps its window to a 500px minimum, so the narrow screenshots taken during the build were 500px layouts cropped, not true phone viewports. The layouts use `flex-wrap` and `min-w-0` throughout and behave at 500px; check the real thing on a phone before trusting it.
 - **Nothing was driven by hand in a browser** — no extension was connected, so the pages were verified by rendering them headlessly, not by clicking. The calculations are unit-tested and the API path was exercised end to end with real requests, states that need a click to reach were rendered by temporarily forcing them (a throwaway route for the history drawer, a forced initial state for the delete confirmation) and then reverting. What has still never been seen mid-interaction is the bill form while typing. The tag → spend join was verified against real data outside the UI.
 - **The mise tasks have not been run through mise** — it isn't installed on the machine they were written on. Each task's command was run directly and works (`node scripts/doctor.mjs`, `node scripts/seed.mjs`, `node scripts/dev.mjs`), so what is unverified is the `mise.toml` itself: the tool pins resolving, `[env]` reaching the tasks, and `mise run seed -- --clear` forwarding its argument.
@@ -308,11 +312,11 @@ anyone without mise:
 
 ```bash
 pnpm install
-pnpm doctor     # same checks
+pnpm run doctor # same checks (`pnpm doctor` is pnpm's own command)
 pnpm dev        # same two processes
 pnpm dev:web    # just Next
 pnpm api        # just the data API (node --watch)
-pnpm check      # 28 tests
+pnpm check      # 31 tests
 pnpm seed       # starter inventory + demo bills (--clear to replace)
 pnpm build      # production build
 ```

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { compareWithHistory, normalizeBill, normalizeBills, sampleJson, today, type Bill } from "./bill.ts";
+import { compareWithHistory, normalizeBill, normalizeBills, sampleJson, today, validateImportJson, type Bill } from "./bill.ts";
 
 const ok = (input: unknown): Bill => {
   const result = normalizeBill(input);
@@ -109,4 +109,9 @@ test("a single bill still works through the import path", () => {
   const result = normalizeBills({ date: "2026-10-01", store: "A", items: [{ name: "Rice", qty: 1, unit: "kg", cost: 100 }] });
   assert.ok("bills" in result);
   assert.equal(result.bills.length, 1);
+});
+
+test("validateImportJson parses and reuses normalizeBills", () => {
+  assert.match((validateImportJson("{") as { error: string }).error, /Not valid JSON/);
+  assert.ok("bills" in validateImportJson(sampleJson()));
 });

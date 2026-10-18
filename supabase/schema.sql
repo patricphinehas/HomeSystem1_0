@@ -24,8 +24,13 @@ create table if not exists items (
   unit        text not null default 'pc',
   min         numeric not null default 0 check (min >= 0),
   tags        text[] not null default '{}',
+  aliases     text[] not null default '{}',
+  patterns    text[] not null default '{}',
   position    integer not null default 0
 );
+
+alter table items add column if not exists aliases text[] not null default '{}';
+alter table items add column if not exists patterns text[] not null default '{}';
 
 create index if not exists items_category_idx on items (category_id, position);
 
@@ -72,3 +77,16 @@ alter table categories enable row level security;
 alter table items      enable row level security;
 alter table bills      enable row level security;
 alter table bill_items enable row level security;
+
+create table if not exists subscriptions (
+  id          text primary key,
+  name        text not null default '',
+  type        text not null default '',
+  tag         text not null default '',
+  holder      text not null default '',
+  shareable   boolean not null default false,
+  share_count integer check (share_count is null or share_count >= 1),
+  position    integer not null default 0
+);
+
+alter table subscriptions enable row level security;

@@ -8,6 +8,10 @@ export type Item = {
   min: number;
   /** Free-text labels for grouping spend on the analytics page. */
   tags?: string[];
+  /** Other names on bills that should map to this item (e.g. brand names). */
+  aliases?: string[];
+  /** Case-insensitive regexes tested against the line name when aliases are not enough. */
+  patterns?: string[];
 };
 
 export type Category = {
@@ -62,6 +66,37 @@ export const MAX_CATEGORIES = 50;
 export const MAX_ITEMS = 500;
 
 const text = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+
+function cleanStringList(raw: unknown, max: number, maxLen: number, label: string): string[] | string {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) return `${label} must be a list.`;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    const s = text(entry);
+    if (!s) continue;
+    if (s.length > maxLen) return `${label} is too long (${maxLen} characters max).`;
+    const key = s.toLowerCase().replace(/\s+/g, " ");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(s);
+    if (out.length > max) return `${label}: no more than ${max}.`;
+  }
+  return out;
+}
+
+function cleanPatternList(raw: unknown, max: number, maxLen: number, label: string): string[] | string {
+  const list = cleanStringList(raw, max, maxLen, label);
+  if (typeof list === "string") return list;
+  for (const p of list) {
+    try {
+      new RegExp(p, "i");
+    } catch {
+      return `${label} "${p}" is not a valid regex.`;
+    }
+  }
+  return list;
+}
 
 /**
  * Validate and normalise a whole inventory document. This is the only gate in
@@ -129,7 +164,23 @@ export function normalizeInventory(input: unknown): { inventory: Inventory } | {
         .filter((t, at2, all) => t && all.indexOf(t) === at2)
         .slice(0, MAX_TAGS);
 
-      items.push({ id: itemId, name: itemName, room, qty, unit, min, ...(tags.length ? { tags } : {}) });
+      const aliases = cleanStringList(item.aliases, 20, 120, `${where}: alias`);
+      if (typeof aliases === "string") return { error: aliases };
+
+      const patterns = cleanPatternList(item.patterns, 5, 80, `${where}: pattern`);
+      if (typeof patterns === "string") return { error: patterns };
+
+      items.push({
+        id: itemId,
+        name: itemName,
+        room,
+        qty,
+        unit,
+        min,
+        ...(tags.length ? { tags } : {}),
+        ...(aliases.length ? { aliases } : {}),
+        ...(patterns.length ? { patterns } : {}),
+      });
     }
 
     categories.push({ id, name, items });
