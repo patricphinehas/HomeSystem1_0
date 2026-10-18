@@ -25,6 +25,7 @@ import { ImportMapDialog } from "../import-map-dialog";
 import { useInventory } from "../use-inventory";
 import { useJson } from "../use-api";
 import { Card, Notice } from "../ui";
+import { PageGrid, PageHeader, Span } from "../page-frame";
 
 type Row = { id: number; name: string; qty: string; unit: string; cost: string };
 
@@ -152,38 +153,24 @@ export default function EnterBill() {
   };
 
   return (
-    <div className="grid gap-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Enter bill</h1>
-        <p className="mt-1 text-sm text-muted">
-          Quantity, unit and what you paid. Everything is reduced to a price per kg, litre or piece, so
-          today&rsquo;s shop can be compared with the last one.
-        </p>
-      </header>
-
-      {error && <Notice>{error}</Notice>}
-
-      <ImportBills
-        date={date}
-        inv={inv}
-        onSaveInventory={saveInventory}
-        onImported={(summary) => {
-          setImported(summary);
-          setError(null);
-          reloadPrices();
-          reloadBills();
-        }}
-        onError={(message) => {
-          setImported(null);
-          setError(message);
-        }}
-        imported={imported}
+    <PageGrid>
+      <PageHeader
+        title="Enter bill"
+        hint="Quantity, unit and what you paid, reduced to a price per kg, litre or piece."
       />
+
+      {error && (
+        <Span>
+          <Notice>{error}</Notice>
+        </Span>
+      )}
 
       {viewBill && <BillDetail bill={viewBill} onClose={() => setViewBill(null)} />}
 
       {saved && (
+        <Span>
         <Card
+          dense
           title="Bill saved"
           subtitle={`${inr(saved.total, 2)} · ${saved.comparisons.length} items`}
           aside={
@@ -208,9 +195,10 @@ export default function EnterBill() {
             ))}
           </ul>
         </Card>
+        </Span>
       )}
 
-      <form onSubmit={submit} className="grid gap-4">
+      <form onSubmit={submit} className="grid content-start gap-3">
         <div className="grid gap-3 sm:grid-cols-[10rem_1fr]">
           <label className="grid gap-1 text-xs text-muted">
             Bill date
@@ -372,7 +360,26 @@ export default function EnterBill() {
         </div>
       </form>
 
+      <div className="grid content-start gap-3">
+      <ImportBills
+        date={date}
+        inv={inv}
+        onSaveInventory={saveInventory}
+        onImported={(summary) => {
+          setImported(summary);
+          setError(null);
+          reloadPrices();
+          reloadBills();
+        }}
+        onError={(message) => {
+          setImported(null);
+          setError(message);
+        }}
+        imported={imported}
+      />
+
       <Card
+        dense
         title="Recent bills"
         subtitle={recent ? `${recent.bills.length} most recent` : "Loading…"}
         aside={
@@ -405,7 +412,8 @@ export default function EnterBill() {
           </ul>
         )}
       </Card>
-    </div>
+      </div>
+    </PageGrid>
   );
 }
 
@@ -535,6 +543,7 @@ function ImportBills({
         />
       )}
     <Card
+      dense
       title="Import bills from JSON"
       subtitle={`One bill as an object, or up to ${MAX_IMPORT} as an array. Nothing is stored unless every bill in the file is valid.`}
       aside={
@@ -654,7 +663,7 @@ function ImportBills({
               <code>aliases</code>, or <code>patterns</code> (regex). Unmatched lines can be mapped on import.
             </li>
           </ul>
-          <pre className="mt-3 overflow-x-auto rounded-xl border border-border bg-surface p-3 text-[11px] leading-relaxed text-fg">
+          <pre className="mt-3 max-w-full overflow-x-auto rounded-xl border border-border bg-surface p-3 text-[11px] leading-relaxed text-fg">
             {sampleJson(date || undefined)}
           </pre>
         </details>

@@ -7,6 +7,7 @@ import { normalizeSubscriptions, type Subscription } from "@/lib/subscriptions";
 import { useInventory } from "../use-inventory";
 import { useSubscriptions } from "../use-subscriptions";
 import { Card, Notice, Skeleton } from "../ui";
+import { PageGrid, PageHeader, Span } from "../page-frame";
 
 const TYPES = ["streaming", "software", "news", "cloud", "utility", "membership", "other"];
 
@@ -45,24 +46,38 @@ export default function SubscriptionsPage() {
     save({ subscriptions: [...doc.subscriptions, sub] });
   };
 
-  return (
-    <div className="grid gap-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Subscriptions</h1>
-        <p className="mt-1 text-sm text-muted">
-          Services the household pays for — type, tag, who holds it, and whether the plan is shared.
-        </p>
-      </header>
+  const subs = doc?.subscriptions ?? [];
+  const shareable = subs.filter((s) => s.shareable).length;
 
-      {(error || localError) && <Notice>{localError ?? error}</Notice>}
-      {!doc && !error && <Skeleton />}
+  return (
+    <PageGrid>
+      <PageHeader
+        title="Subscriptions"
+        hint="Services the household pays for — type, tag, who holds it, and whether the plan is shared."
+      />
+
+      {(error || localError) && (
+        <Span>
+          <Notice>{localError ?? error}</Notice>
+        </Span>
+      )}
+      {!doc && !error && (
+        <Span>
+          <Skeleton />
+        </Span>
+      )}
 
       {doc && (
-        <Card
-          title="All subscriptions"
-          subtitle={`${doc.subscriptions.length} on record`}
-        >
-          <div className="overflow-x-auto">
+        <>
+          <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-4 lg:col-span-full">
+            <Stat label="On record" value={String(subs.length)} />
+            <Stat label="Shareable" value={String(shareable)} />
+            <Stat label="Private" value={String(subs.length - shareable)} />
+            <Stat label="Types" value={String(new Set(subs.map((s) => s.type).filter(Boolean)).size)} />
+          </dl>
+          <Span>
+        <Card dense title="All subscriptions" subtitle={subs.length === 0 ? "None yet — add one below." : `${subs.length} on record`}>
+          <div className="max-w-full overflow-x-auto">
             <table className="w-full min-w-[52rem] text-left text-sm">
               <thead>
                 <tr className="border-b border-border text-xs text-muted">
@@ -97,7 +112,18 @@ export default function SubscriptionsPage() {
           </div>
           <AddRow tagSuggestions={tagSuggestions} onAdd={add} />
         </Card>
+          </Span>
+        </>
       )}
+    </PageGrid>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="bg-surface px-3 py-3">
+      <dd className="font-mono text-xl tabular-nums">{value}</dd>
+      <dt className="mt-1 text-xs text-muted">{label}</dt>
     </div>
   );
 }

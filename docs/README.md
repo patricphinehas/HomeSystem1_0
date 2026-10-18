@@ -8,6 +8,7 @@ Last updated: 2026-10-18.
 ## What it does
 
 - **Overview** (`/`) — four counters (categories, items, running low, out of stock) and the first six things to buy.
+- **Home control** (`/control`) — low stock, recent bills, and subscriptions, plus whether the data API and the selected database answered. The machine panel names that database target and says which home-device controls are not connected.
 - **Inventory management** (`/inventory`) — one tab per category plus a **Buy next** tab. Add, rename, re-count, tag and delete items and categories inline; every edit saves immediately. The chart button on a row opens that item’s whole purchase history: price per unit over time, how often it gets bought, when it is next due, and which shop has been cheapest.
 - **Enter bill** (`/upload`) — a bill's date, shop and lines. Each line is reduced to a price per kg / litre / piece and compared with what that item has cost before.
 - **Analytics** (`/analytics`) — spend over time with a projection, where the money goes, a basket price index, per-purchase price deviations, and the biggest price moves.
@@ -22,6 +23,7 @@ An item is "low" when `qty <= min`. Hitting the minimum is already a problem, so
 | UI | React 19.3, Tailwind 4 (`@tailwindcss/turbopack`) | No component library; the design system is ~10 CSS variables in `app/globals.css`. |
 | Charts | Recharts 3.10 | Line, pie and scatter out of the box, with SVG we can style against our own tokens. |
 | Icons | `@phosphor-icons/react` | |
+| Motion | GSAP 3.15 (core only) | Page leave (`power2.in`) and enter (`power2.out`). Loaded with a dynamic `import()` so it is not in the first server bundle. |
 | Data API | Express 5 (`server/`) | Asked for explicitly; its own process on port 4000, and the only thing that talks to the database. |
 | Storage | `DB_SELECT` in `.env`: `supabase` or `mongodb` | Same API either way. Postgres tables in `supabase/schema.sql`; Mongo keeps a category document and a bill document. `server/db.ts` picks the driver. |
 | Tests | `node --test` over `lib/*.test.ts` | In the runtime already; no Jest/Vitest config to maintain. |
@@ -80,14 +82,23 @@ ever talks to one origin and there is no CORS configuration anywhere.
 ```
 app/
   layout.tsx            sidebar + main shell, fonts, metadata
-  sidebar.tsx           nav, active link from usePathname()
+  sidebar.tsx           nav, active link from usePathname(); a menu on a phone
+  page-motion.tsx       page leave/enter; GSAP imported on the client
+  loading.tsx           route skeleton while the next segment streams in
   page.tsx              Overview
+  control/page.tsx      home control: activity, and what the machine can report
   inventory/page.tsx    tabs, Buy next, item rows, tags, add/delete forms
   upload/page.tsx       bill entry, live per-unit price, recent bills
   analytics/
     page.tsx            filter row, stat tiles, chart cards, price-move table
     charts.tsx          the charts; the four on the page each carry a legend and a table twin
     palette.ts          validated chart colours, light and dark
+  mcp/
+    page.tsx            the tool list, the connect snippet, the servers from .mcp.json
+    chat.tsx            the chat window; engine dropdown, tool calls shown inline
+  manual/page.tsx       the user manual, prose only, no data fetching
+  settings/page.tsx     user, database, inference engine, theme
+  theme.tsx             system / light / dark, localStorage, no server involvement
   ui.tsx                Stepper, Skeleton, Notice, Card, TagEditor
   use-inventory.ts      inventory load + optimistic save
   use-api.ts            read-only JSON fetch with reload
@@ -100,12 +111,16 @@ lib/
   bill.ts               bill shape, validation, price comparison
   analytics.ts          spend, projection, deviation, inflation, index, per-item report
   money.ts              rupee and percentage formatting
-  *.test.ts             31 tests over the five lib modules
+  env-file.ts           patching .env in place, for the settings page
+  *.test.ts             41 tests over the lib modules
 server/
   index.ts              the Express routes, transport only
   db.ts                 reads DB_SELECT and forwards to one driver
   db.postgres.ts        Supabase queries
   db.mongo.ts           MongoDB queries
+  mcp.ts                the tool registry and the MCP JSON-RPC endpoint
+  chat.ts               one OpenAI-compatible chat path for all three engines
+  settings.ts           the .env-backed settings routes
 scripts/
   doctor.mjs            the requirement checks behind `mise run doctor`
   migrate.mjs           applies supabase/schema.sql
@@ -123,7 +138,7 @@ only copy.
 
 ## The API
 
-Five routes. All maths and validation lives in `lib/` as pure functions; `server/index.ts` is transport only.
+Twelve routes. All maths and validation lives in `lib/` as pure functions; `server/index.ts` is transport only.
 
 **`GET /api/inventory`** — `{ categories: [{ id, name, items }] }`, ordered by the stored `order` field.
 
@@ -138,6 +153,18 @@ An import is the same POST with an **array** body, up to 100 bills. It is all-or
 
 **`GET /api/analytics`** — the whole report: totals, spend by category and shop, monthly series, projection, month deviation, price index, inflation (per item and averaged), per-purchase deviations, the price book, and the flat purchase lines.
 
+**`GET` / `PUT /api/subscriptions`** — the subscriptions document, validated by `normalizeSubscriptions`.
+
+**`GET /api/mcp`** — what the MCP server offers (tools with their JSON Schemas), the servers listed in `.mcp.json` with their query strings stripped, and the three inference engines with whether each has a key.
+
+**`POST /api/mcp`** — MCP itself, JSON-RPC: `initialize`, `ping`, `tools/list`, `tools/call`, singly or batched. Hand-rolled rather than `@modelcontextprotocol/sdk`: tools only, one JSON response per request, no SSE, no sessions, no resources or prompts. `server/mcp.ts` carries the ceiling and the upgrade path in a `ponytail:` comment, and `TOOLS` is already the shape the SDK wants.
+
+**`POST /api/chat`** — `{ provider?, messages }`. Runs one turn against the configured engine with the same tool registry attached, executes whatever tools it asks for, and loops up to five rounds before giving up. Answers with only the messages the turn added, tool calls and tool results included, so the page can show the reasoning. Ollama, NVIDIA NIM and OpenRouter all speak the OpenAI chat-completions API, so there is one code path and an engine is a base URL, a key and a model name. Not streamed. An unreachable, unkeyed or wrong-model engine is a `502` naming which — it is the user's to fix, not a server fault.
+
+**`GET` / `PUT /api/settings`** — the `.env`-backed settings. Secrets go out as `set: true` and never as values; an empty secret on a write means "keep it". A write patches `.env` (comments and key order survive, see `lib/env-file.ts`) and sets `process.env`, then answers with which keys need a restart: `DB_SELECT` and the engine settings are live, but the Mongo URI and the Postgres URL are read once at module load by the drivers, so the page says so rather than appearing to work. Unknown keys and invalid choices are a `400`.
+
+There is no authentication on any of this, including the MCP endpoint and the settings write. It is a localhost household app; do not expose port 3000 or 4000.
+
 Failure modes: `400` with a human message for a bad bill or unparseable body; `503` when `DB_SELECT` is missing or invalid, when Supabase is selected and `DATABASE_URL` is unset, when the chosen database cannot be reached (naming the host it tried, never a password), or when the Postgres tables are missing (`42P01`, answered with "run mise run migrate"); `500` otherwise.
 
 ## How data flows
@@ -149,6 +176,8 @@ Failure modes: `400` with a human message for a bad bill or unparseable body; `5
 **Analytics** fetches `/api/analytics` once and then recomputes the whole report **in the browser** from the returned `lines` whenever the date filter changes, by calling the same `analyse()` the server called. One code path, no refetch, and the stat tiles can't disagree with the charts.
 
 **Tags** live on inventory items, not on bills. Grouping spend by tag is a join done on the client between `lines[].itemId` and the current inventory — the page already holds both — so re-tagging an item immediately changes the history, which is the point of tagging things after the fact. An item can carry several tags, so tag shares overlap; the card says so.
+
+**Home control** reads those same payloads: inventory for low stock, `/api/bills` for recent bills, `/api/subscriptions`, and `/api/settings` for whether the database answered and which non-secret target it is aimed at. It adds no route.
 
 ## The price maths
 
@@ -178,19 +207,17 @@ Built with the data-viz method: form first, colour last, validated rather than e
 | Deviation per purchase | scatter, bubble area = line cost | position carries the deviation, size carries the money at stake |
 | One item’s price (drawer) | single line, dots per purchase | every purchase is a real event worth marking; no legend, the title names it |
 
-The series colours come from the reference palette and were re-validated against
-*this app's* surfaces (`#ffffff` light, `#1f1f23` dark) with the validator in the
-dataviz skill, on the adjacent pairlist a pie ring and a multi-line chart use:
-worst adjacent CVD ΔE 9.1 light / 8.4 dark, normal-vision ΔE 19.6 / 19.3 — all
-gates pass. Three light-mode slots fall under 3:1 against white, so the relief
-rule applies: every chart ships visible labels, a legend **and** a table twin
-behind a "Show table" toggle, so no value is reachable by colour alone.
+The series uses the page's own colours. Slot 0 is the accent emerald and slot 1
+is the warn amber, so the spent line, the price line and an "at or below" mark
+are the same green as the sidebar, and a projection or an "above usual" mark is
+the same amber as a warning tile. Three quieter companions (slate, clay, khaki)
+fill the donut; the folded tail is stone and named in the legend. Every named
+light slot is at least 5:1 against white. Each chart still has a legend and a
+table twin behind "Show table".
 
-The scatter's red/green split is a status pair, and red vs green is the classic
-colour-blind failure (ΔE 4.1 under deuteranopia), so the same split is also
-encoded as **shape** — triangle for "paid more", circle for "paid at or below" —
-and named in the legend. Each point carries a 24px transparent hit area so a
-small dot is still catchable.
+The scatter encodes the same split as **shape** — triangle for "paid more",
+circle for "paid at or below" — and names it in the legend. Each point carries
+a 24px transparent hit area so a small dot is still catchable.
 
 ## Decisions, and what they cost
 
@@ -206,6 +233,7 @@ small dot is still catchable.
 - **Shopping ticks live in component state** (`picked` in `BuyNext`). They belong to one trip, not to the inventory, so they are deliberately lost on reload.
 - **No auth, no multi-user.** It runs on the home network.
 - **`newId()` is `Math.random().toString(36)`.** Collision risk is irrelevant at a few hundred items.
+- **No NAS or device metrics.** Home control only shows checks the app can make: the page loaded, `/api/settings` answered, and the database health already on that payload (target with the password stripped, plus ok / error). Disk, shares, and power are listed as not connected. There is no new route for them.
 
 ## Done so far
 
@@ -250,6 +278,12 @@ small dot is still catchable.
 
 **Phase 12 — Supabase.** MongoDB replaced by Postgres. Four tables in `supabase/schema.sql` (`categories`, `items`, `bills`, `bill_items`), every query in `server/db.ts` on the `postgres` driver, `PUT /api/inventory` as one transaction with explicit `position` columns, row-level security enabled with no policies, and `bill_items.item_id` left without a foreign key so deleting an item keeps its purchase history. Migrate, seed and doctor moved with it; the `mongodb` dependency is gone. The pricing logic in `lib/` was not changed. The direct `db.*` host is IPv6-only and does not resolve from this machine, so `.env` uses the transaction pooler in ap-northeast-2 (port 6543). Schema applied there on 2026-10-18; the tables were empty afterwards.
 
+**Phase 14 — compact page matrix.** Every page uses the same shell: the main pane is full width with compact padding, and the content is a two-column grid (`PageGrid` in `app/page-frame.tsx`). Headers, filters, add forms and empty messages sit inside cells, so a page with no rows still shows its controls. Overview, inventory, bills, subscriptions, analytics, settings, the manual and MCP all follow it. The sidebar user block stays pinned to the bottom.
+
+**Phase 15 — chart colours follow the page.** Light-theme charts were a blue / orange / mint / yellow / pink set, three of which sat under 3:1 on white and none of which were the emerald or amber used everywhere else. The series is now those two tokens plus slate, clay and khaki. The palette also follows the theme toggle (`data-theme`), not only the operating system.
+
+**Phase 16 — motion, home control, and a phone layout.** GSAP is loaded with a dynamic `import()` from `app/page-motion.tsx`, one wrapper around the page pane, so it stays out of the server bundle. A navigation leaves with `power2.in` (opacity and a few pixels of translate, 200ms) and enters with `power2.out` (280ms). `prefers-reduced-motion` skips both and the pane stays visible. Tweens are killed on cleanup; a second navigation while a leave is already underway swaps to the newest page instead of chaining fades. `app/loading.tsx` is the route skeleton. **Home control** (`/control`) lists low stock, recent bills, and subscriptions from the existing hooks, and whether the data API and the selected database answered. It links to the page that can change each of those, and it says NAS shares, volumes, and power switches are not connected. On a narrow screen the sidebar is a top bar with a menu; wide tables scroll inside their cards.
+
 ## Where the numbers come from
 
 Audited on 2026-10-18 against MongoDB, before the cutover to Postgres. The client fetches and `lib/` have not changed since, so the static half — no mock data in the pages — still describes the app. The empirical half has not been repeated against Supabase: `server/db.ts` has never executed a query. The write-up below is the record of that Mongo check, not a verification of the current database.
@@ -282,8 +316,8 @@ once at seed time and never again.
 ## Known issues
 
 - **The data API must be restarted after `DB_SELECT` changes.** Node reads `.env` at startup. A process started against Supabase keeps using Supabase until it is restarted.
-- **Phone-width layout is unverified below 500px.** Headless Chrome on Windows clamps its window to a 500px minimum, so the narrow screenshots taken during the build were 500px layouts cropped, not true phone viewports. The layouts use `flex-wrap` and `min-w-0` throughout and behave at 500px; check the real thing on a phone before trusting it.
-- **Nothing was driven by hand in a browser** — no extension was connected, so the pages were verified by rendering them headlessly, not by clicking. The calculations are unit-tested and the API path was exercised end to end with real requests, states that need a click to reach were rendered by temporarily forcing them (a throwaway route for the history drawer, a forced initial state for the delete confirmation) and then reverting. What has still never been seen mid-interaction is the bill form while typing. The tag → spend join was verified against real data outside the UI.
+- **Phone width was checked at 390×844** on 2026-10-18 with a device-metrics override. Headless Chrome on Windows still clamps a real window to 500px, and a physical phone has not been used. At 390px the sidebar is a top bar and a menu, the page does not scroll sideways, and the subscriptions table (832px wide) scrolls inside its card.
+- **The bill form has still not been typed through by hand.** Navigation was clicked in a browser on 2026-10-18 (overview, inventory, home control, settings, subscriptions), including the phone-width override. Earlier states that need a click to reach — the history drawer, the delete confirmation — were rendered by temporarily forcing them and then reverting. The tag → spend join was verified against real data outside the UI.
 - **The mise tasks have not been run through mise** — it isn't installed on the machine they were written on. Each task's command was run directly and works (`node scripts/doctor.mjs`, `node scripts/seed.mjs`, `node scripts/dev.mjs`), so what is unverified is the `mise.toml` itself: the tool pins resolving, `[env]` reaching the tasks, and `mise run seed -- --clear` forwarding its argument.
 - **Deleting an item is still one click, and bills are still write-once.** The confirmation added in phase 10 covers categories only. Nothing in the app can recover a deleted item or category: the documents are gone, and the only trace is the purchase history, which keeps the item id and name of anything that was ever bought (that is what the lost category was rebuilt from).
 - Recharts ships a sizeable client bundle for four charts. Fine for a LAN app; worth a second look if the analytics page ever needs to be fast over a slow link.

@@ -12,8 +12,11 @@
   --warn-soft: #fffbeb;
 }
 
+/* Dark twice: once for the system preference, once for the settings page's
+   explicit choice. `data-theme` is set on <html> before paint (see layout.tsx)
+   and wins over the preference either way. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #18181b;
     --surface: #1f1f23;
     --border: #32323a;
@@ -24,6 +27,18 @@
     --warn: #fbbf24;
     --warn-soft: #30230b;
   }
+}
+
+:root[data-theme="dark"] {
+  --bg: #18181b;
+  --surface: #1f1f23;
+  --border: #32323a;
+  --fg: #f4f4f5;
+  --muted: #a1a1aa;
+  --accent: #34d399;
+  --accent-soft: #052e23;
+  --warn: #fbbf24;
+  --warn-soft: #30230b;
 }
 
 @theme inline {
@@ -51,4 +66,10 @@ button:focus-visible,
 a:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse {
+    animation: none;
+  }
 }

@@ -71,7 +71,7 @@ function Frame({
 
   return (
     <div className="grid gap-3">
-      {showTable ? <div className="overflow-x-auto">{table}</div> : children}
+      {showTable ? <div className="max-w-full overflow-x-auto">{table}</div> : children}
 
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <ul className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
@@ -123,7 +123,15 @@ const Table = ({ head, rows }: { head: string[]; rows: (string | number)[][] }) 
 
 /* ---------- 1. spend over time, with the projection ---------- */
 
-export function SpendTrend({ monthly, projection }: { monthly: MonthSpend[]; projection: MonthSpend[] }) {
+export function SpendTrend({
+  monthly,
+  projection,
+  height = 260,
+}: {
+  monthly: MonthSpend[];
+  projection: MonthSpend[];
+  height?: number;
+}) {
   const p = usePalette();
   const last = monthly[monthly.length - 1];
 
@@ -150,7 +158,7 @@ export function SpendTrend({ monthly, projection }: { monthly: MonthSpend[]; pro
         />
       }
     >
-      <ResponsiveContainer width="100%" height={260}>
+      <ResponsiveContainer width="100%" height={height}>
         <LineChart data={data} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
           <CartesianGrid stroke={p.grid} vertical={false} />
           <XAxis dataKey="month" tickFormatter={MONTH_LABEL} tick={axisTick(p)} tickLine={false} axisLine={{ stroke: p.axis }} />
@@ -198,7 +206,15 @@ export function SpendTrend({ monthly, projection }: { monthly: MonthSpend[]; pro
 
 /* ---------- 2. where the money goes ---------- */
 
-export function SpendBreakdown({ slices, dimension }: { slices: { name: string; spend: number }[]; dimension: string }) {
+export function SpendBreakdown({
+  slices,
+  dimension,
+  height = 260,
+}: {
+  slices: { name: string; spend: number }[];
+  dimension: string;
+  height?: number;
+}) {
   const p = usePalette();
   const total = slices.reduce((t, s) => t + s.spend, 0);
 
@@ -227,7 +243,7 @@ export function SpendBreakdown({ slices, dimension }: { slices: { name: string; 
         />
       }
     >
-      <ResponsiveContainer width="100%" height={260}>
+      <ResponsiveContainer width="100%" height={height}>
         <PieChart>
           <Pie
             data={data}
@@ -278,7 +294,13 @@ export function SpendBreakdown({ slices, dimension }: { slices: { name: string; 
 
 /* ---------- 3. the basket price index ---------- */
 
-export function PriceIndexChart({ index }: { index: { month: string; index: number; items: number }[] }) {
+export function PriceIndexChart({
+  index,
+  height = 240,
+}: {
+  index: { month: string; index: number; items: number }[];
+  height?: number;
+}) {
   const p = usePalette();
   const latest = index[index.length - 1];
 
@@ -287,7 +309,7 @@ export function PriceIndexChart({ index }: { index: { month: string; index: numb
       legend={[{ color: p.series[0], label: `Basket of ${latest?.items ?? 0} repeat items`, value: String(latest?.index ?? 100) }]}
       table={<Table head={["Month", "Index", "vs start"]} rows={index.map((r) => [MONTH_LABEL(r.month), r.index, pct(r.index - 100)])} />}
     >
-      <ResponsiveContainer width="100%" height={240}>
+      <ResponsiveContainer width="100%" height={height}>
         <LineChart data={index} margin={{ top: 8, right: 16, bottom: 4, left: 0 }}>
           <CartesianGrid stroke={p.grid} vertical={false} />
           <XAxis dataKey="month" tickFormatter={MONTH_LABEL} tick={axisTick(p)} tickLine={false} axisLine={{ stroke: p.axis }} />
@@ -353,7 +375,7 @@ const hitShape =
     );
   };
 
-export function DeviationScatter({ deviations }: { deviations: Deviation[] }) {
+export function DeviationScatter({ deviations, height = 260 }: { deviations: Deviation[]; height?: number }) {
   const p = usePalette();
   const points = deviations.map((d) => ({ ...d, t: Date.parse(d.date) }));
   const over = points.filter((d) => d.pct > 0);
@@ -382,7 +404,7 @@ export function DeviationScatter({ deviations }: { deviations: Deviation[] }) {
         />
       }
     >
-      <ResponsiveContainer width="100%" height={260}>
+      <ResponsiveContainer width="100%" height={height}>
         <ScatterChart margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
           <CartesianGrid stroke={p.grid} vertical={false} />
           <XAxis

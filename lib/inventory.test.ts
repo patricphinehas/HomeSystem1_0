@@ -1,7 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  MAX_TAGS,
+  addTag,
   allTags,
+  cleanTag,
   isLow,
   lowStock,
   normalizeInventory,
@@ -95,4 +98,23 @@ test("tags and the tag index come back off a stored inventory", () => {
   assert.deepEqual(allTags(stored), ["staple"]);
   assert.deepEqual(tagIndex(stored).get("a"), ["staple"]);
   assert.deepEqual(tagIndex(stored).get("b"), []);
+});
+
+test("a comma separates tags rather than ending up inside one", () => {
+  assert.deepEqual(addTag([], "milk,"), ["milk"]);
+  assert.deepEqual(addTag([], "milk, bread ,Eggs"), ["milk", "bread", "eggs"]);
+  assert.equal(cleanTag("a,b"), "a b");
+});
+
+test("adding several at once still dedupes and stops at the cap", () => {
+  assert.deepEqual(addTag(["milk"], "milk,bread,milk"), ["milk", "bread"]);
+  const full = Array.from({ length: MAX_TAGS }, (_, i) => `t${i}`);
+  assert.deepEqual(addTag(full, "extra,more"), full);
+  assert.deepEqual(addTag(["a"], "b,c,d,e,f,g,h,i,j"), ["a", "b", "c", "d", "e", "f", "g", "h"]);
+});
+
+test("nothing to add returns the same array, so the editor does not save", () => {
+  const tags = ["milk"];
+  assert.equal(addTag(tags, ","), tags);
+  assert.equal(addTag(tags, "milk"), tags);
 });

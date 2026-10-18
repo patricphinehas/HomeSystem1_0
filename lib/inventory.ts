@@ -50,16 +50,24 @@ export const allTags = (inv: Inventory) =>
 export const tagIndex = (inv: Inventory) =>
   new Map(inv.categories.flatMap((c) => c.items.map((i) => [i.id, i.tags ?? []] as const)));
 
-/** Tags are short, lowercase, deduped and capped — they are axis labels, not notes. */
-export const cleanTag = (raw: string) => raw.trim().toLowerCase().replace(/\s+/g, " ").slice(0, 24);
+/**
+ * Tags are short, lowercase, deduped and capped — they are axis labels, not
+ * notes. A comma is the separator between tags, so it is never part of one.
+ */
+export const cleanTag = (raw: string) =>
+  raw.replace(/,/g, " ").trim().toLowerCase().replace(/\s+/g, " ").slice(0, 24);
 
 export const MAX_TAGS = 8;
 
+/** Adds one tag, or several when the input is comma-separated. */
 export const addTag = (tags: string[] | undefined, raw: string) => {
-  const tag = cleanTag(raw);
-  const current = tags ?? [];
-  if (!tag || current.includes(tag) || current.length >= MAX_TAGS) return current;
-  return [...current, tag];
+  let next = tags ?? [];
+  for (const part of raw.split(",")) {
+    const tag = cleanTag(part);
+    if (!tag || next.includes(tag) || next.length >= MAX_TAGS) continue;
+    next = [...next, tag];
+  }
+  return next;
 };
 
 export const MAX_CATEGORIES = 50;

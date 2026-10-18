@@ -3,35 +3,33 @@
 import { useEffect, useState } from "react";
 
 /**
- * Chart colours.
+ * Chart colours, taken from the same tokens as the rest of the page.
  *
- * The series slots come from the data-viz reference palette and were validated
- * against *this app's* surfaces (#ffffff light, #1f1f23 dark) with the
- * validator in the dataviz skill, on the adjacent pairlist that a pie ring and
- * a multi-line chart use:
+ * Slot 0 is the accent emerald and slot 1 is the warn amber, in both themes,
+ * so a spent line, a price line and an "at or below" mark are the same green
+ * the sidebar uses, and a projection or an "above usual" mark is the same
+ * amber as a warning tile. The other three slots are quieter companions for
+ * the donut — slate, clay, khaki — not a second rainbow.
  *
- *   light  worst adjacent CVD ΔE 9.1, normal-vision ΔE 19.6 — pass
- *   dark   worst adjacent CVD ΔE 8.4, normal-vision ΔE 19.3 — pass
+ * Every named light slot is at least 5:1 against white. The folded "Other"
+ * tail is a lighter stone and is named in the legend. The dark column is the
+ * same hues lifted for #1f1f23, using the dark accent and warn tokens for the
+ * first two slots.
  *
- * Three light-mode slots sit under 3:1 against white, so the pie ships visible
- * labels and a table view rather than relying on the fill alone. The dark
- * column is the same hues re-stepped for the dark surface, not a flip.
- *
- * `good`/`critical` are status colours, kept out of the series order. Red and
- * green are indistinguishable under deuteranopia (ΔE 4.1), so the scatter also
- * encodes the same split as shape (circle vs triangle) and labels it.
+ * Emerald and amber survive deuteranopia better than red against green, and
+ * the scatter still encodes that split as shape (circle vs triangle).
  */
 
 export type Palette = typeof LIGHT;
 
 const LIGHT = {
   dark: false,
-  series: ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4"],
+  series: ["#047857", "#b45309", "#375a7f", "#7a3b4a", "#6a5a3a"],
   other: "#a8a29e",
-  good: "#0ca30c",
-  critical: "#d03b3b",
+  good: "#047857",
+  critical: "#b45309",
   grid: "#e7e5e4",
-  axis: "#c3c2b7",
+  axis: "#d6d3d1",
   ink: "#78716c",
   strong: "#1c1917",
   surface: "#ffffff",
@@ -39,27 +37,39 @@ const LIGHT = {
 
 const DARK: Palette = {
   dark: true,
-  series: ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181"],
+  series: ["#34d399", "#fbbf24", "#8eb0d0", "#e098a6", "#b7a07a"],
   other: "#6b6b75",
-  good: "#0ca30c",
-  critical: "#d03b3b",
+  good: "#34d399",
+  critical: "#fbbf24",
   grid: "#32323a",
-  axis: "#383835",
+  axis: "#3f3f46",
   ink: "#a1a1aa",
   strong: "#f4f4f5",
   surface: "#1f1f23",
 };
 
-/** Follows the OS theme, like the rest of the app. Starts light for hydration. */
+function chartIsDark() {
+  const theme = document.documentElement.dataset.theme;
+  if (theme === "dark") return true;
+  if (theme === "light") return false;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+
+/** Matches `data-theme` the way globals.css does, then the OS. Starts light so the first paint agrees with the server. */
 export function usePalette(): Palette {
   const [dark, setDark] = useState(false);
 
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    setDark(mq.matches);
-    const onChange = (e: MediaQueryListEvent) => setDark(e.matches);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
+    const sync = () => setDark(chartIsDark());
+    sync();
+    mq.addEventListener("change", sync);
+    const obs = new MutationObserver(sync);
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => {
+      mq.removeEventListener("change", sync);
+      obs.disconnect();
+    };
   }, []);
 
   return dark ? DARK : LIGHT;

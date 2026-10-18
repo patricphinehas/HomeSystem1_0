@@ -8,6 +8,11 @@
  *   GET  /api/analytics   spend, projection, deviation and inflation
  *   GET  /api/subscriptions   household subscriptions
  *   PUT  /api/subscriptions   replace subscriptions
+ *   GET  /api/mcp         the tools this server exposes, and the servers in .mcp.json
+ *   POST /api/mcp         MCP itself, JSON-RPC (see mcp.ts)
+ *   POST /api/chat        one chat turn against the configured model, tools included
+ *   GET  /api/settings    the .env-backed settings and whether the database answers
+ *   PUT  /api/settings    write some of them back
  *
  * Next.js rewrites all of these here (see next.config.ts), so the browser only
  * ever talks to one origin and there is no CORS configuration anywhere.
@@ -22,6 +27,9 @@ import { compareWithHistory, normalizeBills } from "../lib/bill.ts";
 import type { PriceRef } from "../lib/bill.ts";
 import { normalizeInventory } from "../lib/inventory.ts";
 import { normalizeSubscriptions } from "../lib/subscriptions.ts";
+import { chat, currentProvider, describeProviders, isProvider } from "./chat.ts";
+import { mcpEndpoint, mcpInfo } from "./mcp.ts";
+import { readSettings, writeSettings } from "./settings.ts";
 import {
   NotConfigured,
   describeTarget,
@@ -103,6 +111,32 @@ app.put("/api/subscriptions", async (req, res) => {
   if ("error" in result) return res.status(400).json({ error: result.error });
   await writeSubscriptions(result.doc);
   res.json({ ok: true, count: result.doc.subscriptions.length });
+});
+
+app.get("/api/mcp", (_req, res) => {
+  res.json({ ...mcpInfo(), providers: describeProviders(), provider: currentProvider() });
+});
+app.post("/api/mcp", mcpEndpoint);
+
+app.get("/api/settings", readSettings);
+app.put("/api/settings", writeSettings);
+
+app.post("/api/chat", async (req, res) => {
+  const asked = String(req.body?.provider ?? "").trim();
+  if (asked && !isProvider(asked)) return res.status(400).json({ error: `Unknown inference engine: ${asked}` });
+  const provider = isProvider(asked) ? asked : currentProvider();
+
+  const messages = req.body?.messages;
+  if (!Array.isArray(messages) || !messages.length) return res.status(400).json({ error: "messages must be a non-empty array." });
+  if (messages.length > 60) return res.status(400).json({ error: "That conversation is too long. Start a new one." });
+
+  try {
+    res.json(await chat(provider, messages));
+  } catch (e) {
+    // The model being unreachable, unkeyed or wrong is the user's to fix, and
+    // the message already says which — it is not a 500.
+    res.status(502).json({ error: (e as Error).message });
+  }
 });
 
 // An unreachable or unconfigured database is the expected failure here, and it

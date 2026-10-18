@@ -12,6 +12,9 @@ const nextConfig: NextConfig = {
     { source: "/api/bills", destination: `${API}/api/bills` },
     { source: "/api/analytics", destination: `${API}/api/analytics` },
     { source: "/api/subscriptions", destination: `${API}/api/subscriptions` },
+    { source: "/api/mcp", destination: `${API}/api/mcp` },
+    { source: "/api/chat", destination: `${API}/api/chat` },
+    { source: "/api/settings", destination: `${API}/api/settings` },
   ],
   partialPrefetching: true,
   turbopack: {

@@ -75,22 +75,25 @@ export function Card({
   subtitle,
   aside,
   children,
+  dense,
 }: {
   title: string;
   subtitle?: string;
   aside?: React.ReactNode;
   children: React.ReactNode;
+  /** Tighter padding for a multi-cell page, such as the analytics matrix. */
+  dense?: boolean;
 }) {
   return (
-    <section className="rounded-xl border border-border bg-surface p-4 md:p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <section className={`h-full min-w-0 rounded-xl border border-border bg-surface ${dense ? "p-3" : "p-4 md:p-5"}`}>
+      <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <h2 className="text-sm font-medium">{title}</h2>
           {subtitle && <p className="mt-0.5 text-xs text-muted">{subtitle}</p>}
         </div>
         {aside}
       </div>
-      <div className="mt-4">{children}</div>
+      <div className={dense ? "mt-2" : "mt-4"}>{children}</div>
     </section>
   );
 }
@@ -101,11 +104,13 @@ export function TagEditor({
   onChange,
   label,
   suggestions = [],
+  placeholder = "+ tag",
 }: {
   tags: string[];
   onChange: (next: string[]) => void;
   label: string;
   suggestions?: string[];
+  placeholder?: string;
 }) {
   const [draft, setDraft] = useState("");
   const full = tags.length >= MAX_TAGS;
@@ -136,10 +141,10 @@ export function TagEditor({
       ))}
       {!full && (
         <input
-          aria-label={`Add a tag to ${label}`}
+          aria-label={`Add to ${label}, comma-separated`}
           list="tag-suggestions"
           value={draft}
-          placeholder="+ tag"
+          placeholder={placeholder}
           onChange={(e) => (e.target.value.includes(",") ? commit(e.target.value) : setDraft(e.target.value))}
           onBlur={() => draft && commit(draft)}
           onKeyDown={(e) => {

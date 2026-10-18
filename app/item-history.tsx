@@ -108,7 +108,7 @@ export function ItemHistory({
 
             <section className="grid gap-2">
               <h3 className="text-sm font-medium">Every purchase</h3>
-              <div className="overflow-x-auto">
+              <div className="max-w-full overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="text-muted">

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Sidebar } from "./sidebar";
+import { MainFrame } from "./main-frame";
 import { DevAnnotator } from "./agentation";
 import "./globals.css";
 
@@ -17,12 +18,19 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
-      <body className="min-h-full md:flex md:h-full">
+      <head>
+        {/* Applies the saved theme before first paint; see app/theme.tsx. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{var t=localStorage.getItem("theme");if(t==="dark"||t==="light")document.documentElement.dataset.theme=t}catch(e){}`,
+          }}
+        />
+      </head>
+      <body className="min-h-full max-w-full md:flex md:h-full">
         <Sidebar />
-        <main className="min-w-0 flex-1 px-4 py-8 md:overflow-y-auto md:px-10">
-          <div className="mx-auto max-w-4xl">{children}</div>
-        </main>
+        <MainFrame>{children}</MainFrame>
         <DevAnnotator />
       </body>
     </html>
