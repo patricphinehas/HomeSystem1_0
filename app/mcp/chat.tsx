@@ -3,7 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { PaperPlaneTilt, Wrench } from "@phosphor-icons/react";
+import { ClockCounterClockwise, PaperPlaneTilt, Wrench } from "@phosphor-icons/react";
+import { openingLine, type ChatDay } from "@/lib/chat-log";
+import { BanterLoader } from "../ui";
 
 export type Provider = { id: string; label: string; base: string; model: string; needsKey: boolean; hasKey: boolean };
 
@@ -12,6 +14,8 @@ type Message = {
   content: string | null;
   name?: string;
   tool_calls?: { id: string; function: { name: string; arguments: string } }[];
+  /** How a replayed day records the same thing — see lib/chat-log.ts. */
+  calls?: string[];
 };
 
 const EXAMPLES = [
@@ -31,7 +35,22 @@ export function Chat({ providers, initial }: { providers: Provider[]; initial: s
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [days, setDays] = useState<ChatDay[] | null>(null);
+  const [startedAt, setStartedAt] = useState(0);
+  const [showing, setShowing] = useState<string | null>(null);
   const end = useRef<HTMLDivElement>(null);
+
+  // The log is written by the API at the end of each turn, so it is re-read
+  // after one rather than guessed at here.
+  const loadDays = () =>
+    fetch("/api/chat-log")
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((body: { days: ChatDay[] }) => setDays(body.days))
+      .catch(() => setDays([]));
+
+  useEffect(() => {
+    loadDays();
+  }, []);
 
   useEffect(() => {
     end.current?.scrollIntoView({ behavior: "smooth" });
@@ -43,10 +62,15 @@ export function Chat({ providers, initial }: { providers: Provider[]; initial: s
     const question = text.trim();
     if (!question || busy) return;
 
-    const history = [...messages, { role: "user" as const, content: question }];
+    // Asking something while reading an old day starts today's thread again,
+    // rather than appending to a conversation that has already been written.
+    const base = showing ? [] : messages;
+    setShowing(null);
+    const history = [...base, { role: "user" as const, content: question }];
     setMessages(history);
     setDraft("");
     setBusy(true);
+    setStartedAt(Date.now());
     setError(null);
 
     try {
@@ -56,6 +80,7 @@ export function Chat({ providers, initial }: { providers: Provider[]; initial: s
         body: JSON.stringify({ provider, messages: history }),
       });
       const body = await response.json().catch(() => null);
+      if (response.ok) void loadDays();
       if (!response.ok) {
         // A reply with no JSON in it did not come from the data API — it is the
         // dev server's proxy saying it could not reach :4000, and "Internal
@@ -81,8 +106,35 @@ export function Chat({ providers, initial }: { providers: Provider[]; initial: s
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {days && days.length > 0 && (
+            <select
+              aria-label="Earlier conversations"
+              value={showing ?? ""}
+              onChange={(e) => {
+                const date = e.target.value;
+                setShowing(date || null);
+                setMessages(date ? (days.find((d) => d.date === date)?.messages ?? []) : []);
+                setError(null);
+              }}
+              className="max-w-52 rounded-xl border border-border bg-bg px-2 py-1.5 text-sm"
+            >
+              <option value="">Today</option>
+              {days.map((day) => (
+                <option key={day.date} value={day.date}>
+                  {day.date} · {openingLine(day) || `${day.messages.length} messages`}
+                </option>
+              ))}
+            </select>
+          )}
           {messages.length > 0 && (
-            <button type="button" onClick={() => setMessages([])} className="text-xs text-muted hover:text-fg">
+            <button
+              type="button"
+              onClick={() => {
+                setMessages([]);
+                setShowing(null);
+              }}
+              className="text-xs text-muted hover:text-fg"
+            >
               Clear
             </button>
           )}
@@ -103,6 +155,13 @@ export function Chat({ providers, initial }: { providers: Provider[]; initial: s
       </header>
 
       <div className="flex-1 space-y-3 overflow-y-auto p-4">
+        {showing && (
+          <p className="flex items-center gap-1.5 rounded-xl bg-accent-soft px-3 py-2 text-xs text-accent">
+            <ClockCounterClockwise size={13} />
+            Reading {showing}. Asking something new starts today&rsquo;s thread.
+          </p>
+        )}
+
         {messages.length === 0 && (
           <div className="grid gap-2">
             <p className="text-sm text-muted">
@@ -127,7 +186,7 @@ export function Chat({ providers, initial }: { providers: Provider[]; initial: s
           <Bubble key={i} message={message} />
         ))}
 
-        {busy && <p className="text-sm text-muted">Thinking...</p>}
+        {busy && <Writing since={startedAt} />}
         {error && (
           <p role="status" className="rounded-xl bg-warn-soft px-4 py-3 text-sm text-warn">
             {error}
@@ -163,6 +222,30 @@ export function Chat({ providers, initial }: { providers: Provider[]; initial: s
   );
 }
 
+/**
+ * A turn can take over a minute: the model reasons, calls tools, reads what
+ * they returned and writes. A static "Thinking..." for that long reads as a
+ * hang, so this counts the seconds and keeps moving.
+ */
+function Writing({ since }: { since: number }) {
+  const [seconds, setSeconds] = useState(0);
+
+  useEffect(() => {
+    const tick = () => setSeconds(Math.round((Date.now() - since) / 1000));
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [since]);
+
+  return (
+    <p role="status" className="flex items-center gap-3 text-sm text-muted">
+      <BanterLoader scale={0.42} />
+      Writing{seconds > 2 ? ` · ${seconds}s` : ""}
+      {seconds > 25 ? " · a reasoning model takes its time" : ""}
+    </p>
+  );
+}
+
 function Bubble({ message }: { message: Message }) {
   if (message.role === "tool") {
     return (
@@ -188,11 +271,8 @@ function Bubble({ message }: { message: Message }) {
 
   // An assistant turn that only called tools has no prose worth a bubble.
   if (!message.content?.trim()) {
-    return message.tool_calls?.length ? (
-      <p className="text-xs text-muted">
-        Calling {message.tool_calls.map((c) => c.function.name).join(", ")}...
-      </p>
-    ) : null;
+    const calls = message.calls ?? message.tool_calls?.map((c) => c.function.name) ?? [];
+    return calls.length ? <p className="text-xs text-muted">Calling {calls.join(", ")}...</p> : null;
   }
 
   return (

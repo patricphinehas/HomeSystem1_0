@@ -12,6 +12,7 @@ import type { Subscription, SubscriptionsDoc } from "../lib/subscriptions.ts";
 import { fromStored } from "../lib/calendar.ts";
 import type { CalendarDoc } from "../lib/calendar.ts";
 import type { FamilyDoc } from "../lib/family.ts";
+import type { ChatDay, LoggedMessage } from "../lib/chat-log.ts";
 import type { Line } from "../lib/analytics.ts";
 
 const CONNECTION = process.env.DATABASE_URL ?? "";
@@ -173,11 +174,13 @@ type SubscriptionRow = {
   holder: string;
   shareable: boolean;
   share_count: number | null;
+  cost: string | null;
+  cycle: string | null;
 };
 
 export async function readSubscriptions(): Promise<SubscriptionsDoc> {
   const rows = await sql()<SubscriptionRow[]>`
-    select id, name, type, tag, holder, shareable, share_count from subscriptions order by position, id
+    select id, name, type, tag, holder, shareable, share_count, cost, cycle from subscriptions order by position, id
   `;
   return {
     subscriptions: rows.map((r) => ({
@@ -188,6 +191,9 @@ export async function readSubscriptions(): Promise<SubscriptionsDoc> {
       holder: r.holder,
       shareable: r.shareable,
       shareCount: r.share_count,
+      // Rows written before the columns existed read as a free monthly one.
+      cost: Number(r.cost ?? 0),
+      cycle: (r.cycle || "monthly") as Subscription["cycle"],
     })),
   };
 }
@@ -205,6 +211,8 @@ export async function writeSubscriptions(doc: SubscriptionsDoc): Promise<void> {
           holder: sub.holder,
           shareable: sub.shareable,
           share_count: sub.shareCount,
+          cost: sub.cost,
+          cycle: sub.cycle,
           position,
         })}
         on conflict (id) do update set
@@ -214,11 +222,31 @@ export async function writeSubscriptions(doc: SubscriptionsDoc): Promise<void> {
           holder = excluded.holder,
           shareable = excluded.shareable,
           share_count = excluded.share_count,
+          cost = excluded.cost,
+          cycle = excluded.cycle,
           position = excluded.position
       `;
     }
     await tx`delete from subscriptions ${ids.length ? tx`where id <> all(${ids})` : tx``}`;
   });
+}
+
+/* ---------------- chat log ---------------- */
+
+/** One row per day; `messages` is jsonb because it is only ever read whole. */
+export async function readChatDays(): Promise<ChatDay[]> {
+  const rows = await sql()<{ day: string; messages: LoggedMessage[] }[]>`
+    select day, messages from chats order by day desc
+  `;
+  return rows.map((r) => ({ date: r.day, messages: r.messages ?? [] }));
+}
+
+export async function writeChatDay(day: ChatDay): Promise<void> {
+  const db = sql();
+  await db`
+    insert into chats ${db({ day: day.date, messages: db.json(day.messages) })}
+    on conflict (day) do update set messages = excluded.messages
+  `;
 }
 
 /* ---------------- family ---------------- */
@@ -458,7 +486,7 @@ export async function readBills(limit: number): Promise<StoredBill[]> {
 /** Empties every table. Used only by `seed --clear`. */
 export async function clear(): Promise<void> {
   // bill_items and items go with their parents through the cascade.
-  await sql()`truncate bills, categories, subscriptions, events, family cascade`;
+  await sql()`truncate bills, categories, subscriptions, events, family, chats cascade`;
 }
 
 export async function counts(): Promise<{ categories: number; items: number; bills: number }> {

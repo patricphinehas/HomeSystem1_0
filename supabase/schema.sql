@@ -143,3 +143,17 @@ create table if not exists family (
 );
 
 alter table family enable row level security;
+
+-- What was asked of the chat, a day at a time. `day` is the primary key, so
+-- an append is an upsert; messages is jsonb because it is only read whole.
+create table if not exists chats (
+  day      text primary key,
+  messages jsonb not null default '[]'::jsonb
+);
+
+alter table chats enable row level security;
+
+-- Cost and billing cycle, added after the first cut of the table. Existing
+-- rows become a free monthly subscription, which is what the drivers assume.
+alter table subscriptions add column if not exists cost  numeric(12, 2) not null default 0 check (cost >= 0);
+alter table subscriptions add column if not exists cycle text not null default 'monthly';

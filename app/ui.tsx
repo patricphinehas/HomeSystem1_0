@@ -47,13 +47,56 @@ export function Stepper({
   );
 }
 
-export function Skeleton({ rows = 4 }: { rows?: number }) {
+/**
+ * What every page, table and chart shows while its data is in flight.
+ *
+ * Still called Skeleton and still takes `rows`, because ~15 call sites pass
+ * it: `rows` no longer draws grey blocks, it sets how much room the loader
+ * reserves, so the page does not jump when the real content lands.
+ */
+export function Skeleton({ rows = 4, label = "Loading" }: { rows?: number; label?: string }) {
   return (
-    <div className="grid gap-3" aria-busy="true" aria-label="Loading inventory">
-      {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} className="h-14 animate-pulse rounded-xl border border-border bg-surface" />
-      ))}
+    <div
+      role="status"
+      aria-busy="true"
+      aria-label={label}
+      className="grid place-items-center rounded-xl border border-border bg-surface p-6"
+      style={{ minHeight: `${Math.min(Math.max(rows, 1), 6) * 3.5}rem` }}
+    >
+      <BarLoader />
+      <span className="mt-3 text-xs text-muted">{label}...</span>
     </div>
+  );
+}
+
+/** elijahgummer's bars (uiverse.io, MIT). The CSS is in globals.css. */
+export function BarLoader({ height = 44 }: { height?: number }) {
+  return (
+    <span aria-hidden className="bar-loader" style={{ "--bar-height": `${height}px` } as React.CSSProperties}>
+      {Array.from({ length: 8 }).map((_, i) => (
+        <span key={i} className="bar-loader__bar" />
+      ))}
+    </span>
+  );
+}
+
+/**
+ * Nawsome's nine-box loader (uiverse.io, MIT), for the one wait that is long
+ * enough to deserve something to look at: a model writing an answer.
+ */
+export function BanterLoader({ scale = 0.5 }: { scale?: number }) {
+  return (
+    <span
+      aria-hidden
+      className="block"
+      style={{ width: 72 * scale, height: 72 * scale }}
+    >
+      <span className="banter-loader" style={{ "--loader-scale": scale } as React.CSSProperties}>
+        {Array.from({ length: 9 }).map((_, i) => (
+          <span key={i} className="banter-loader__box" />
+        ))}
+      </span>
+    </span>
   );
 }
 

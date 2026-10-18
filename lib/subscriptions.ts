@@ -10,6 +10,49 @@ export type Subscription = {
   shareable: boolean;
   /** How many people can use it when shareable. */
   shareCount: number | null;
+  /** What it costs each cycle, in the household's currency. */
+  cost: number;
+  /** How often that is charged. */
+  cycle: Cycle;
+};
+
+/**
+ * ponytail: a fixed set, not a number of days. "Every 3 months" is a quarter
+ * and "every 2 years" does not exist in practice; a free-form interval would
+ * buy nothing and cost a renewal-date calculator. Add one when something
+ * actually bills on an odd period.
+ */
+export const CYCLES = ["monthly", "quarterly", "yearly", "weekly", "one-off"] as const;
+
+export type Cycle = (typeof CYCLES)[number];
+
+const isCycle = (v: unknown): v is Cycle => (CYCLES as readonly unknown[]).includes(v);
+
+/** Months per cycle, for putting everything on one scale. One-off is not recurring. */
+const PER_YEAR: Record<Cycle, number> = {
+  weekly: 52,
+  monthly: 12,
+  quarterly: 4,
+  yearly: 1,
+  "one-off": 0,
+};
+
+/** What this subscription costs in a year. A one-off charge costs nothing yearly. */
+export const yearlyCost = (sub: Subscription) => round(sub.cost * PER_YEAR[sub.cycle]);
+
+/** The same figure per month, which is how most of them are quoted. */
+export const monthlyCost = (sub: Subscription) => round(yearlyCost(sub) / 12);
+
+const round = (n: number) => Math.round(n * 100) / 100;
+
+/** What the household pays for all of them, recurring only. */
+export const subscriptionTotals = (subs: Subscription[]) => {
+  const recurring = subs.filter((s) => s.cycle !== "one-off");
+  return {
+    monthly: round(recurring.reduce((t, s) => t + monthlyCost(s), 0)),
+    yearly: round(recurring.reduce((t, s) => t + yearlyCost(s), 0)),
+    oneOff: round(subs.filter((s) => s.cycle === "one-off").reduce((t, s) => t + s.cost, 0)),
+  };
 };
 
 export type SubscriptionsDoc = { subscriptions: Subscription[] };
@@ -59,7 +102,14 @@ export function normalizeSubscriptions(input: unknown): { doc: SubscriptionsDoc 
       shareCount = n;
     }
 
-    subscriptions.push({ id, name, type, tag, holder, shareable, shareCount });
+    const cost = row.cost === undefined || row.cost === null || (row.cost as unknown) === "" ? 0 : Number(row.cost);
+    if (!Number.isFinite(cost) || cost < 0) return { error: `${at}: cost must be zero or more.` };
+
+    // Anything stored before cycles existed is a monthly subscription.
+    const cycle = (row.cycle as unknown) === undefined || (row.cycle as unknown) === "" ? "monthly" : row.cycle;
+    if (!isCycle(cycle)) return { error: `${at}: cycle must be one of: ${CYCLES.join(", ")}.` };
+
+    subscriptions.push({ id, name, type, tag, holder, shareable, shareCount, cost: round(cost), cycle });
   }
 
   return { doc: { subscriptions } };

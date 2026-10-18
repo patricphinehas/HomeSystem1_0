@@ -15,6 +15,7 @@
  *   GET  /api/mcp         the tools this server exposes, and the servers in .mcp.json
  *   POST /api/mcp         MCP itself, JSON-RPC (see mcp.ts)
  *   POST /api/chat        one chat turn against the configured model, tools included
+ *   GET  /api/chat-log    what was asked, a day at a time
  *   GET  /api/settings    the .env-backed settings and whether the database answers
  *   PUT  /api/settings    write some of them back
  *
@@ -33,6 +34,8 @@ import { normalizeInventory } from "../lib/inventory.ts";
 import { normalizeSubscriptions } from "../lib/subscriptions.ts";
 import { normalizeCalendar } from "../lib/calendar.ts";
 import { normalizeFamily } from "../lib/family.ts";
+import { appendToDay, sortDays, toLogged, type LoggedMessage } from "../lib/chat-log.ts";
+import { todayISO } from "../lib/calendar.ts";
 import { chat, currentProvider, describeProviders, isProvider } from "./chat.ts";
 import { mcpEndpoint, mcpInfo } from "./mcp.ts";
 import { readSettings, writeSettings } from "./settings.ts";
@@ -42,11 +45,13 @@ import {
   insertBills,
   readBills,
   readCalendar,
+  readChatDays,
   readFamily,
   readInventory,
   readLines,
   readSubscriptions,
   writeCalendar,
+  writeChatDay,
   writeFamily,
   writeInventory,
   writeSubscriptions,
@@ -153,6 +158,31 @@ app.post("/api/mcp", mcpEndpoint);
 app.get("/api/settings", readSettings);
 app.put("/api/settings", writeSettings);
 
+app.get("/api/chat-log", async (_req, res) => {
+  res.json({ days: sortDays(await readChatDays()) });
+});
+
+/**
+ * Keep the turn. Written here rather than by the browser so a turn that failed
+ * leaves nothing behind, and so the log is the same whichever client asked.
+ * A failure to write must not lose the answer the user is waiting for, so it
+ * is logged and swallowed.
+ */
+async function remember(question: unknown, added: unknown[]) {
+  try {
+    const logged = [question, ...added]
+      .map((m) => toLogged(m as Parameters<typeof toLogged>[0]))
+      .filter((m): m is LoggedMessage => m !== null);
+    if (!logged.length) return;
+
+    const date = todayISO();
+    const today = (await readChatDays()).find((d) => d.date === date) ?? { date, messages: [] };
+    await writeChatDay(appendToDay(today, logged));
+  } catch (e) {
+    console.error("could not write the chat log:", (e as Error).message);
+  }
+}
+
 app.post("/api/chat", async (req, res) => {
   const asked = String(req.body?.provider ?? "").trim();
   if (asked && !isProvider(asked)) return res.status(400).json({ error: `Unknown inference engine: ${asked}` });
@@ -163,7 +193,9 @@ app.post("/api/chat", async (req, res) => {
   if (messages.length > 60) return res.status(400).json({ error: "That conversation is too long. Start a new one." });
 
   try {
-    res.json(await chat(provider, messages));
+    const turn = await chat(provider, messages);
+    res.json(turn);
+    await remember(messages[messages.length - 1], turn.messages);
   } catch (e) {
     // The model being unreachable, unkeyed or wrong is the user's to fix, and
     // the message already says which — it is not a 500.

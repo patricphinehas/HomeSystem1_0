@@ -78,12 +78,12 @@ const PRICES = {
 
 /** Demo subscriptions: one of each kind the page can show, shared and not. */
 const SUBSCRIPTIONS = [
-  { id: "sub-stream-1", name: "Netflix", type: "streaming", tag: "entertainment", holder: "Dad", shareable: true, shareCount: 4 },
-  { id: "sub-stream-2", name: "Spotify Family", type: "streaming", tag: "entertainment", holder: "Anu", shareable: true, shareCount: 6 },
-  { id: "sub-cloud-1", name: "Google One 200GB", type: "cloud", tag: "home", holder: "Dad", shareable: true, shareCount: 5 },
-  { id: "sub-news-1", name: "The Hindu", type: "news", tag: "home", holder: "Mum", shareable: false, shareCount: null },
-  { id: "sub-utility-1", name: "Broadband", type: "utility", tag: "home", holder: "Dad", shareable: false, shareCount: null },
-  { id: "sub-software-1", name: "Password manager", type: "software", tag: "home", holder: "Ravi", shareable: true, shareCount: 5 },
+  { id: "sub-stream-1", name: "Netflix", type: "streaming", tag: "entertainment", holder: "Dad", shareable: true, shareCount: 4, cost: 649, cycle: "monthly" },
+  { id: "sub-stream-2", name: "Spotify Family", type: "streaming", tag: "entertainment", holder: "Anu", shareable: true, shareCount: 6, cost: 179, cycle: "monthly" },
+  { id: "sub-cloud-1", name: "Google One 200GB", type: "cloud", tag: "home", holder: "Dad", shareable: true, shareCount: 5, cost: 1300, cycle: "yearly" },
+  { id: "sub-news-1", name: "The Hindu", type: "news", tag: "home", holder: "Mum", shareable: false, shareCount: null, cost: 299, cycle: "quarterly" },
+  { id: "sub-utility-1", name: "Broadband", type: "utility", tag: "home", holder: "Dad", shareable: false, shareCount: null, cost: 999, cycle: "monthly" },
+  { id: "sub-software-1", name: "Password manager", type: "software", tag: "home", holder: "Ravi", shareable: true, shareCount: 5, cost: 3200, cycle: "yearly" },
 ];
 
 /** The household the demo data belongs to, seeded into the family collection. */

@@ -107,7 +107,7 @@ app/
   calendar/page.tsx     month grid, the day's plans, what is coming up
   calendar/event-dialog.tsx  one entry in full, in a <dialog>
   theme.tsx             system / light / dark, localStorage, no server involvement
-  ui.tsx                Stepper, Skeleton, Notice, Card, TagEditor, Tabs
+  ui.tsx                Stepper, Skeleton, Notice, Card, TagEditor, Tabs, loaders
   use-inventory.ts      inventory load + optimistic save
   use-calendar.ts       calendar load + optimistic save
   use-family.ts         household load + optimistic save
@@ -124,10 +124,11 @@ lib/
   analytics.ts          spend, projection, deviation, inflation, index, per-item report
   money.ts              money and percentage formatting, in the region's currency
   region.ts             locale, timezone and currency, and what "today" means
+  chat-log.ts           what was asked, a day at a time
   env-file.ts           patching .env in place, for the settings page
   calendar.ts           the shared calendar: types, validation, month-grid and duration maths
   family.ts             who lives here: names, roles, validation
-  *.test.ts             69 tests over the lib modules
+  *.test.ts             75 tests over the lib modules
 server/
   index.ts              the Express routes, transport only
   db.ts                 reads DB_SELECT and forwards to one driver
@@ -153,7 +154,7 @@ only copy.
 
 ## The API
 
-Sixteen routes. All maths and validation lives in `lib/` as pure functions; `server/index.ts` is transport only.
+Seventeen routes. All maths and validation lives in `lib/` as pure functions; `server/index.ts` is transport only.
 
 **`GET /api/inventory`** — `{ categories: [{ id, name, items }] }`, ordered by the stored `order` field.
 
@@ -177,6 +178,8 @@ An import is the same POST with an **array** body, up to 100 bills. It is all-or
 **`POST /api/mcp`** — MCP itself, JSON-RPC: `initialize`, `ping`, `tools/list`, `tools/call`, singly or batched. Hand-rolled rather than `@modelcontextprotocol/sdk`: tools only, one JSON response per request, no SSE, no sessions, no resources or prompts. `server/mcp.ts` carries the ceiling and the upgrade path in a `ponytail:` comment, and `TOOLS` is already the shape the SDK wants.
 
 **`POST /api/chat`** — `{ provider?, messages }`. Runs one turn against the configured engine with the same tool registry attached, executes whatever tools it asks for, and loops up to five rounds before giving up. Answers with only the messages the turn added, tool calls and tool results included, so the page can show the reasoning. Ollama, NVIDIA NIM and OpenRouter all speak the OpenAI chat-completions API, so there is one code path and an engine is a base URL, a key and a model name. Not streamed. An unreachable, unkeyed or wrong-model engine is a `502` naming which — it is the user's to fix, not a server fault.
+
+**`GET /api/chat-log`** — what was asked, newest day first. There is no write route: the API appends to the day itself at the end of a successful turn, so a failed turn leaves nothing behind and the log is the same whichever client asked.
 
 **`GET` / `PUT /api/family`** — who lives here, validated by `normalizeFamily`. A name may be blank while it is being typed, but two people may not share one: the calendar keys invitations and RSVPs by name, so a duplicate would make two people one.
 
@@ -309,6 +312,14 @@ Writing the local-date helper turned up a real bug next door. `today()` in `lib/
 
 Two things came back from using it. The first was a real bug: the dialog saves on every keystroke and `normalizeCalendar` demanded a title, so clearing the title to retype it was rejected and the field appeared frozen — `normalizeInventory` had already solved that for item names, and the calendar now follows it. The second was the shape of the day panel: an add form sitting permanently under the list reads as part of the day, so it went behind an **Add** button, and the empty day says what to press. `createdBy` arrived at the same time: the author gets the fields, everyone else gets the same detail as text with the RSVP buttons and the comment box still live. It is a courtesy and not a permission — `canEdit` compares two strings from settings, and `PUT /api/calendar` still takes an edit from anybody. Authentication is what turns it into a rule.
 
+**Phase 22 — the long wait, and what it was hiding.** `POST /api/chat` had been failing with a bare `Internal Server Error` and a response body DevTools would not even show. It was not the API: its error middleware logs every 500 and the log was clean. It was **the dev proxy in front of the rewrites**, which gives up after 30s (`proxyTimeout || 30000` in `next/dist/server/lib/router-utils/proxy-request.js`) and answers plain text. A reasoning model with two tool rounds takes 11-30s, and one measured turn took 71. Three numbers now stack deliberately: a 90s timeout per model call, a 110s budget for the whole turn (rounds already running finish, none is started past it), and `experimental.proxyTimeout` at 150s above both — so a slow provider comes back as a legible 502 or a part-way answer, never as the proxy's opaque 500. The client also now says "the data API did not answer" when a reply has no JSON in it, because that is the proxy talking and not the API.
+
+**Chat history**, while we were in there: a `chats` collection keyed by day (`lib/chat-log.ts`), written by the API at the end of a turn and read back through a day picker in the chat header. Reasoning traces and tool-call ids are dropped on the way in — large, provider-specific, and meaningless a day later. Asking something while reading an old day starts today's thread rather than appending to one already written.
+
+**Two CSS loaders** from uiverse.io (both MIT, both recoloured to the theme's tokens): Nawsome's nine-box choreography for the one wait long enough to deserve watching — the model writing, with the seconds counted beside it — and elijahgummer's bars everywhere else. `Skeleton` keeps its name and its `rows` prop, because fifteen call sites pass it; `rows` now reserves the height rather than drawing grey blocks, so nothing jumps when the data lands. Both stop moving under `prefers-reduced-motion`.
+
+**Subscriptions grew a cost and a cycle**, which is the thing a subscription page is for and which this one had been missing. `cost` plus one of `monthly`/`quarterly`/`yearly`/`weekly`/`one-off`, with `yearlyCost`, `monthlyCost` and `subscriptionTotals` putting them on one scale; the page shows per-month and per-year totals and a per-month figure on each row. A one-off is recorded but kept out of the recurring totals. A fixed set of cycles rather than a number of days: "every 3 months" is a quarter, and a free-form interval would buy nothing and cost a renewal-date calculator. Rows written before the columns existed read as a free monthly subscription.
+
 **Phase 21 — region, and a model that had been retired.** Three things in one go, all of them things that only show up from using the app.
 
 The chat started answering `NVIDIA NIM (Nemotron) refused the request: Gone`. 410 Gone from `integrate.api.nvidia.com` means the model has left the catalogue, and the default here — `nvidia/llama-3.3-nemotron-super-49b-v1.5` — had. `GET /v1/models` with the key lists what an account can actually call; the successor is `nvidia/nemotron-3-super-120b-a12b`, confirmed to emit `tool_calls` before it was made the default. The error message was its own bug: `complete()` parsed the body as JSON and fell back to `response.statusText`, so a non-JSON error body became the single word "Gone". It now reads the body as text first and reports the status, the model and whatever the provider actually said.
@@ -396,7 +407,7 @@ pnpm run doctor # same checks (`pnpm doctor` is pnpm's own command)
 pnpm dev        # same two processes
 pnpm dev:web    # just Next
 pnpm api        # just the data API (node --watch)
-pnpm check      # 69 tests
+pnpm check      # 75 tests
 pnpm seed       # inventory, demo bills, subscriptions and calendar (--clear)
 pnpm build      # production build
 ```

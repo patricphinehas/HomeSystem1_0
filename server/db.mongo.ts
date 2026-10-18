@@ -15,6 +15,7 @@ import type { Inventory, Item } from "../lib/inventory.ts";
 import type { Subscription, SubscriptionsDoc } from "../lib/subscriptions.ts";
 import { fromStored } from "../lib/calendar.ts";
 import type { FamilyDoc, Person } from "../lib/family.ts";
+import type { ChatDay, LoggedMessage } from "../lib/chat-log.ts";
 import type { CalEvent, CalendarDoc } from "../lib/calendar.ts";
 import type { Line } from "../lib/analytics.ts";
 
@@ -25,6 +26,8 @@ type CategoryDoc = { _id: string; name: string; items: Item[]; order: number };
 type BillDoc = Bill & { _id?: ObjectId; createdAt: Date };
 type SubscriptionDoc = Omit<Subscription, "id"> & { _id: string; order: number };
 type FamilyDoc_ = Omit<Person, "id"> & { _id: string; order: number };
+/** `_id` is the day, so an append is an upsert and there is nothing to index. */
+type ChatDoc = { _id: string; messages: LoggedMessage[] };
 type EventDoc = Omit<CalEvent, "id"> & { _id: string; /** Replaced by `people`; still read for old documents. */ who?: string };
 
 let client: MongoClient | null = null;
@@ -60,6 +63,7 @@ const subscriptions = async (): Promise<Collection<SubscriptionDoc>> =>
   (await connect()).collection<SubscriptionDoc>("subscriptions");
 const events = async (): Promise<Collection<EventDoc>> => (await connect()).collection<EventDoc>("events");
 const family = async (): Promise<Collection<FamilyDoc_>> => (await connect()).collection<FamilyDoc_>("family");
+const chats = async (): Promise<Collection<ChatDoc>> => (await connect()).collection<ChatDoc>("chats");
 
 /** Reported by the API and by `doctor`, with any credentials left out. */
 export const describeTarget = () => {
@@ -112,7 +116,7 @@ export async function writeInventory(inventory: Inventory): Promise<void> {
 export async function readSubscriptions(): Promise<SubscriptionsDoc> {
   const docs = await (await subscriptions()).find({}, { sort: { order: 1 } }).toArray();
   return {
-    subscriptions: docs.map(({ _id, name, type, tag, holder, shareable, shareCount }) => ({
+    subscriptions: docs.map(({ _id, name, type, tag, holder, shareable, shareCount, cost, cycle }) => ({
       id: _id,
       name,
       type,
@@ -120,6 +124,9 @@ export async function readSubscriptions(): Promise<SubscriptionsDoc> {
       holder,
       shareable,
       shareCount,
+      // Rows written before cost and cycle existed read as a free monthly one.
+      cost: cost ?? 0,
+      cycle: cycle ?? "monthly",
     })),
   };
 }
@@ -139,6 +146,8 @@ export async function writeSubscriptions(doc: SubscriptionsDoc): Promise<void> {
             holder: s.holder,
             shareable: s.shareable,
             shareCount: s.shareCount,
+            cost: s.cost,
+            cycle: s.cycle,
             order,
           },
           upsert: true,
@@ -151,6 +160,18 @@ export async function writeSubscriptions(doc: SubscriptionsDoc): Promise<void> {
 }
 
 /* ---------------- calendar ---------------- */
+
+/* ---------------- chat log ---------------- */
+
+export async function readChatDays(): Promise<ChatDay[]> {
+  const docs = await (await chats()).find({}, { sort: { _id: -1 } }).toArray();
+  return docs.map(({ _id, messages }) => ({ date: _id, messages: messages ?? [] }));
+}
+
+export async function writeChatDay(day: ChatDay): Promise<void> {
+  // replaceOne types the replacement as WithoutId, and the filter carries the day.
+  await (await chats()).replaceOne({ _id: day.date }, { messages: day.messages }, { upsert: true });
+}
 
 /* ---------------- family ---------------- */
 
@@ -243,6 +264,7 @@ export async function clear(): Promise<void> {
     (await subscriptions()).deleteMany({}),
     (await events()).deleteMany({}),
     (await family()).deleteMany({}),
+    (await chats()).deleteMany({}),
   ]);
 }
 

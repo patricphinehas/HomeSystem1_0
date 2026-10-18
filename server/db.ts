@@ -27,6 +27,8 @@ export const readInventory = () => driver().readInventory();
 export const writeInventory: typeof pg.writeInventory = (inventory) => driver().writeInventory(inventory);
 export const readSubscriptions = () => driver().readSubscriptions();
 export const writeSubscriptions: typeof pg.writeSubscriptions = (doc) => driver().writeSubscriptions(doc);
+export const readChatDays = () => driver().readChatDays();
+export const writeChatDay: typeof pg.writeChatDay = (day) => driver().writeChatDay(day);
 export const readFamily = () => driver().readFamily();
 export const writeFamily: typeof pg.writeFamily = (doc) => driver().writeFamily(doc);
 export const readCalendar = () => driver().readCalendar();

@@ -87,6 +87,13 @@ const MAX_ROUNDS = 5;
  */
 const TIMEOUT_MS = 90_000;
 
+/**
+ * And a budget for the whole turn, because MAX_ROUNDS calls of TIMEOUT_MS each
+ * would outlast any proxy in front of this. Rounds already under way finish;
+ * none is started past it. Has to stay below `proxyTimeout` in next.config.ts.
+ */
+const TURN_BUDGET_MS = 110_000;
+
 const trim = (text: string) =>
   text.length <= MAX_TOOL_CHARS ? text : `${text.slice(0, MAX_TOOL_CHARS)}\n...[truncated, ask for a narrower slice]`;
 
@@ -149,8 +156,16 @@ async function complete(id: ProviderId, messages: ChatMessage[]): Promise<ChatMe
 export async function chat(id: ProviderId, history: ChatMessage[]) {
   const conversation: ChatMessage[] = [{ role: "system", content: SYSTEM }, ...history];
   const added: ChatMessage[] = [];
+  const deadline = Date.now() + TURN_BUDGET_MS;
 
   for (let round = 0; round < MAX_ROUNDS; round++) {
+    if (round > 0 && Date.now() > deadline) {
+      added.push({
+        role: "assistant",
+        content: "That took too long and I stopped part-way. The tool results above are real; ask something narrower.",
+      });
+      return { messages: added, model: PROVIDERS[id].model() };
+    }
     const reply = await complete(id, conversation);
     conversation.push(reply);
     added.push(reply);

@@ -142,7 +142,10 @@ export default function ManualPage() {
 
       <Section id="subscriptions" title="Subscriptions">
         <p>
-          What the household pays for monthly that never appears on a till receipt. Mark a plan shareable and record the
+          What the household pays for that never appears on a till receipt. Record what each one costs and how often it
+          is charged — monthly, quarterly, yearly, weekly, or a one-off — and the page puts them all on one scale:
+          what you pay a month, what you pay a year, and a per-month figure on every row however it is billed. A
+          one-off is kept out of those totals, because it is not a running cost. Mark a plan shareable and record the
           seats, so it is obvious which ones have room and which are being paid for twice.
         </p>
       </Section>
@@ -194,6 +197,8 @@ export default function ManualPage() {
           <strong>Chat</strong>, the other tab, calls those same tools for you. Pick the engine in the dropdown — a local{" "}
           <strong>Ollama</strong>, <strong>NVIDIA NIM</strong> for Nemotron, or <strong>OpenRouter</strong> for anything
           hosted — and ask in plain words. Answers come back formatted: lists, emphasis, tables and clickable links.
+          Every turn is kept, a day at a time, and the dropdown in the chat header reads any of them back; asking
+          something new always starts today&rsquo;s thread.
           Each tool call is shown as it happens, so you can open one and check the numbers the answer was built from. A local Ollama model must support tool calling, or it will answer from
           nothing.
         </p>
