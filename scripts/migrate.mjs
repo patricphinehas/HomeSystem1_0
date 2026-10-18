@@ -1,5 +1,6 @@
 /**
- * Applies supabase/schema.sql to whatever DATABASE_URL points at.
+ * Prepares whichever database DB_SELECT names: supabase/schema.sql on Postgres,
+ * indexes on MongoDB.
  *
  *   mise run migrate
  *
@@ -9,7 +10,7 @@
 
 import { applySchema, close, counts, describeTarget } from "../server/db.ts";
 
-console.log(`applying supabase/schema.sql to ${describeTarget()}`);
+console.log(`preparing ${describeTarget()}`);
 await applySchema();
 const n = await counts();
 console.log(`schema applied. categories ${n.categories}, items ${n.items}, bills ${n.bills}`);

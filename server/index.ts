@@ -1,5 +1,5 @@
 /**
- * The whole data API, over Supabase (Postgres). Five routes:
+ * The whole data API. DB_SELECT in .env chooses Supabase or MongoDB. Routes:
  *
  *   GET  /api/inventory   categories and their items
  *   PUT  /api/inventory   replace the inventory
@@ -110,7 +110,7 @@ app.put("/api/subscriptions", async (req, res) => {
 app.use((err: Error & { status?: number; code?: string }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (err instanceof NotConfigured) return res.status(503).json({ error: err.message });
 
-  const offline = /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|CONNECT_TIMEOUT|terminating connection|password authentication/i.test(
+  const offline = /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|CONNECT_TIMEOUT|terminating connection|password authentication|MongoNetworkError|MongoServerSelectionError|server selection/i.test(
     `${err.name} ${err.code} ${err.message}`,
   );
   if (offline) return res.status(503).json({ error: `Cannot reach the database at ${describeTarget()}. (${err.message})` });
@@ -127,4 +127,4 @@ app.use((err: Error & { status?: number; code?: string }, _req: express.Request,
 });
 
 const port = Number(process.env.API_PORT ?? 4000);
-app.listen(port, () => console.log(`data api on http://localhost:${port} -> postgres ${describeTarget()}`));
+app.listen(port, () => console.log(`data api on http://localhost:${port} -> ${describeTarget()}`));

@@ -123,8 +123,7 @@ for (let back = MONTHS - 1; back >= 0; back--) {
   }
 }
 
-// The tables may not exist yet on a fresh Supabase project; applying the schema
-// first makes `seed` work on its own, and it is safe to re-apply.
+// Postgres gets its tables here; Mongo gets its indexes. Safe to re-run.
 await applySchema();
 
 const before = await counts();

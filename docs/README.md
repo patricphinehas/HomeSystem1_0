@@ -1,8 +1,8 @@
 # Home System — development log
 
 Household inventory, bill entry and price analytics. A Next.js app for the
-pages, an Express API for the data, and Supabase (Postgres) for all of it —
-nothing is read from or written to disk at runtime.
+pages, an Express API for the data, and either Supabase or MongoDB behind it —
+`DB_SELECT` in `.env` chooses. Nothing is read from or written to disk at runtime.
 Last updated: 2026-10-18.
 
 ## What it does
@@ -23,7 +23,7 @@ An item is "low" when `qty <= min`. Hitting the minimum is already a problem, so
 | Charts | Recharts 3.10 | Line, pie and scatter out of the box, with SVG we can style against our own tokens. |
 | Icons | `@phosphor-icons/react` | |
 | Data API | Express 5 (`server/`) | Asked for explicitly; its own process on port 4000, and the only thing that talks to the database. |
-| Storage | Supabase (Postgres), `postgres` driver | Four tables — `categories` + `items`, `bills` + `bill_items`. Schema in `supabase/schema.sql`; every query in `server/db.ts`. |
+| Storage | `DB_SELECT` in `.env`: `supabase` or `mongodb` | Same API either way. Postgres tables in `supabase/schema.sql`; Mongo keeps a category document and a bill document. `server/db.ts` picks the driver. |
 | Tests | `node --test` over `lib/*.test.ts` | In the runtime already; no Jest/Vitest config to maintain. |
 | Dev annotator | `agentation` (dev dependency) | Click-to-annotate toolbar for pointing a coding agent at an element; mounted in development only. |
 | Package manager | pnpm 12.14 | `pnpm-workspace.yaml` skips `sharp` and `unrs-resolver` builds. |
@@ -35,19 +35,18 @@ Next.js 16 conventions used here that differ from older versions: `cacheComponen
 ## Configuration
 
 `.env` (a copy of `.env.example`, which is the one `.env*` file git keeps) holds
-`DATABASE_URL`, `API_PORT` and `API_URL`. Next loads it itself; every node entry
-point loads it with `--env-file-if-exists=.env`, so the API, the seed and the
-doctor all see the same values. It is deliberately *not* duplicated in an
-`[env]` block in `mise.toml`: one place to change it.
+`DB_SELECT`, the settings for whichever database that names, `API_PORT` and
+`API_URL`. Next loads it itself; every node entry point loads it with
+`--env-file-if-exists=.env`. It is deliberately *not* duplicated in an `[env]`
+block in `mise.toml`: one place to change it.
 
-`DATABASE_URL` is the only required value and the app will not serve data
-without it — `mise run doctor` fails loudly rather than the pages failing
-quietly. `API_PORT` and `API_URL` have defaults in code, so a missing `.env`
-still starts the processes; they just have nowhere to read from. Use the pooled
-connection string (transaction mode, port 6543) for a long-running server; the
-direct `:5432` one works too. The password must be URL-encoded if it contains
-`@ : / ? # %`. The server turns named prepared statements off for port 6543,
-because Supavisor transaction mode drops them between queries.
+`DB_SELECT` is `supabase` or `mongodb`. `mise run doctor` fails if it is missing
+or neither of those. `mongodb` uses `MONGODB_URI` (default
+`mongodb://127.0.0.1:27017`) and `MONGODB_DB` (default `homesystem`). `supabase`
+requires `DATABASE_URL` — the pooled connection string (transaction mode, port
+6543). The password must be URL-encoded if it contains `@ : / ? # %`. Named
+prepared statements are off for port 6543, because Supavisor transaction mode
+drops them between queries.
 
 The Supabase publishable and service-role keys are listed in `.env.example` but
 unused: the server connects with the database password, not through PostgREST.
@@ -60,9 +59,7 @@ schema work from the editor.
 
 ```
 browser → :3000  Next.js (pages only)
-                   └── rewrite ─────────→ :4000 Express ── /api/inventory → categories + items
-                                                           /api/bills     → bills + bill_items
-                                                           /api/analytics    (Supabase/Postgres)
+                   └── rewrite ─────────→ :4000 Express ── DB_SELECT=mongodb | supabase
 ```
 
 The rewrites live in `next.config.ts`. Next has no route handlers at all — it
@@ -71,7 +68,10 @@ ever talks to one origin and there is no CORS configuration anywhere.
 
 | Variable | Default | Used by |
 |---|---|---|
-| `DATABASE_URL` | none — **required** | Express, seed, migrate, doctor |
+| `DB_SELECT` | none — **required**, `supabase` or `mongodb` | Express, seed, migrate, doctor |
+| `MONGODB_URI` | `mongodb://127.0.0.1:27017` | Mongo, when selected |
+| `MONGODB_DB` | `homesystem` | Mongo, when selected |
+| `DATABASE_URL` | none — **required when supabase** | Postgres, when selected |
 | `API_PORT` | `4000` | Express |
 | `API_URL` | `http://127.0.0.1:4000` | Next (rewrite target) |
 
@@ -102,8 +102,10 @@ lib/
   money.ts              rupee and percentage formatting
   *.test.ts             31 tests over the five lib modules
 server/
-  index.ts              the five Express routes
-  db.ts                 the Postgres connection and every query
+  index.ts              the Express routes, transport only
+  db.ts                 reads DB_SELECT and forwards to one driver
+  db.postgres.ts        Supabase queries
+  db.mongo.ts           MongoDB queries
 scripts/
   doctor.mjs            the requirement checks behind `mise run doctor`
   migrate.mjs           applies supabase/schema.sql
@@ -136,7 +138,7 @@ An import is the same POST with an **array** body, up to 100 bills. It is all-or
 
 **`GET /api/analytics`** — the whole report: totals, spend by category and shop, monthly series, projection, month deviation, price index, inflation (per item and averaged), per-purchase deviations, the price book, and the flat purchase lines.
 
-Failure modes: `400` with a human message for a bad bill or unparseable body; `503` when `DATABASE_URL` is unset, when the database cannot be reached (naming the host it tried, never the password), or when the tables are missing (Postgres `42P01`, answered with "run mise run migrate"); `500` otherwise.
+Failure modes: `400` with a human message for a bad bill or unparseable body; `503` when `DB_SELECT` is missing or invalid, when Supabase is selected and `DATABASE_URL` is unset, when the chosen database cannot be reached (naming the host it tried, never a password), or when the Postgres tables are missing (`42P01`, answered with "run mise run migrate"); `500` otherwise.
 
 ## How data flows
 
@@ -192,7 +194,7 @@ small dot is still catchable.
 
 ## Decisions, and what they cost
 
-- **Everything is in Supabase; there is no JSON store and no Mongo.** One place to back up, one process that owns the data, and both halves of the model are queryable. Cost: the app does not run at all without a reachable database and a `DATABASE_URL`, and a household app now depends on a hosted service being up.
+- **`DB_SELECT` picks Supabase or MongoDB.** One process owns the data either way, and the pages never know which. Cost: the selected database has to be reachable, and a household app follows whichever host that line names. Mongo replaces a category as one document; Postgres keeps the same data in tables. Switching `DB_SELECT` does not copy data across.
 - **`bill_items.item_id` is deliberately not a foreign key.** Deleting an inventory item must not delete what you paid for it: the purchase history is the only record that outlives a deleted item or category, and it is what a lost category was once rebuilt from. Every other relationship is a real foreign key with `on delete cascade`.
 - **Row-level security is on, with no policies.** Supabase exposes PostgREST on every project, so tables left open are readable by anyone holding the publishable key. RLS with no policies denies that outright, while this app's own connection — which authenticates as the database owner, not through PostgREST — is unaffected.
 - **Positions are explicit columns.** `categories.position` and `items.position` keep the tab and row order the UI relies on; Postgres has no inherent row order to borrow.
@@ -244,6 +246,8 @@ small dot is still catchable.
 
 **Seed data.** Groceries, Cleaning, Bath & utilities, Games, Stationery, Wellness & health — 28 items with rooms, units and minimums.
 
+**Phase 13 — `DB_SELECT`.** The API can talk to either database. `.env` sets `DB_SELECT` to `supabase` or `mongodb`; `server/db.ts` forwards every call to `db.postgres.ts` or `db.mongo.ts`. Mongo stores one document per category (items embedded, `order` for tab order) and one document per bill, which is the shape the local `homesystem` database already had. Subscriptions are a third collection. This machine's `.env` selects MongoDB.
+
 **Phase 12 — Supabase.** MongoDB replaced by Postgres. Four tables in `supabase/schema.sql` (`categories`, `items`, `bills`, `bill_items`), every query in `server/db.ts` on the `postgres` driver, `PUT /api/inventory` as one transaction with explicit `position` columns, row-level security enabled with no policies, and `bill_items.item_id` left without a foreign key so deleting an item keeps its purchase history. Migrate, seed and doctor moved with it; the `mongodb` dependency is gone. The pricing logic in `lib/` was not changed. The direct `db.*` host is IPv6-only and does not resolve from this machine, so `.env` uses the transaction pooler in ap-northeast-2 (port 6543). Schema applied there on 2026-10-18; the tables were empty afterwards.
 
 ## Where the numbers come from
@@ -277,7 +281,7 @@ once at seed time and never again.
 
 ## Known issues
 
-- **The API routes have not been exercised against Supabase yet.** Migrate and doctor have run (PostgreSQL 17.11, schema present, tables empty). Seed, and a restart of the data API so it reloads `.env`, are still outstanding. The process already listening on port 4000 was started before the pooler URL was set.
+- **The data API must be restarted after `DB_SELECT` changes.** Node reads `.env` at startup. A process started against Supabase keeps using Supabase until it is restarted.
 - **Phone-width layout is unverified below 500px.** Headless Chrome on Windows clamps its window to a 500px minimum, so the narrow screenshots taken during the build were 500px layouts cropped, not true phone viewports. The layouts use `flex-wrap` and `min-w-0` throughout and behave at 500px; check the real thing on a phone before trusting it.
 - **Nothing was driven by hand in a browser** — no extension was connected, so the pages were verified by rendering them headlessly, not by clicking. The calculations are unit-tested and the API path was exercised end to end with real requests, states that need a click to reach were rendered by temporarily forcing them (a throwaway route for the history drawer, a forced initial state for the delete confirmation) and then reverting. What has still never been seen mid-interaction is the bill form while typing. The tag → spend join was verified against real data outside the UI.
 - **The mise tasks have not been run through mise** — it isn't installed on the machine they were written on. Each task's command was run directly and works (`node scripts/doctor.mjs`, `node scripts/seed.mjs`, `node scripts/dev.mjs`), so what is unverified is the `mise.toml` itself: the tool pins resolving, `[env]` reaching the tasks, and `mise run seed -- --clear` forwarding its argument.
@@ -295,17 +299,18 @@ on Windows, `curl https://mise.run | sh` elsewhere.
 
 ```bash
 mise run setup      # mise install (Node 24, pnpm 12.14) + pnpm install + create .env
-#                     then paste DATABASE_URL into .env
-mise run doctor     # toolchain, dependencies, config, database, schema, ports
-mise run migrate    # apply supabase/schema.sql (safe to re-run)
+#                     set DB_SELECT in .env
+mise run doctor     # toolchain, dependencies, config, selected database, ports
+mise run migrate    # Postgres schema, or Mongo indexes (safe to re-run)
 mise run seed       # starter inventory + demo bills (-- --clear to replace)
 mise run develop    # pages on :3000, data API on :4000
 mise run check      # the test suite
 mise run build      # production build of the pages
 ```
 
-`DATABASE_URL` in `.env` is the only required value; `seed` applies the schema
-itself, so on a fresh project `migrate` is optional.
+`DB_SELECT` in `.env` is the only required choice. `mongodb` has defaults for
+the URI and database name. `supabase` also needs `DATABASE_URL`. `seed` prepares
+the selected database itself, so on a fresh project `migrate` is optional.
 
 Every task is a thin wrapper over a script that also works on its own, for
 anyone without mise:
@@ -323,15 +328,14 @@ pnpm build      # production build
 
 `doctor` checks Node (22.18+, since `server/` and `scripts/` are TypeScript run
 without a build step), pnpm against the `packageManager` pin, the key packages,
-whether `.env` was loaded, that Supabase answers and which Postgres version,
-whether the tables exist and hold anything, and whether `:3000` and `:4000` are
-free. Missing requirements exit 1; "tables are empty" and "port already in use"
-are warnings, because both are often fine.
+whether `.env` was loaded, that the database named by `DB_SELECT` answers,
+whether it holds anything, and whether `:3000` and `:4000` are free. Missing
+requirements exit 1; "database is empty" and "port already in use" are warnings,
+because both are often fine.
 
-Supabase has to be reachable at `DATABASE_URL` before **any** page shows data,
-and an empty database means an empty app until `seed` runs or you add a category
-by hand. When it is unreachable the pages say which host was tried — never the
-password.
+The selected database has to be reachable before **any** page shows data, and an
+empty one means an empty app until `seed` runs or you add a category by hand.
+When it is unreachable the pages say which host was tried — never a password.
 
 ## Keeping this file honest
 

@@ -33,7 +33,7 @@ description = "Check the toolchain, dependencies, configuration, database and po
 run = "node --env-file-if-exists=.env scripts/doctor.mjs"
 
 [tasks.migrate]
-description = "Apply supabase/schema.sql to DATABASE_URL"
+description = "Prepare the database named by DB_SELECT (Postgres schema, or Mongo indexes)"
 run = "node --env-file-if-exists=.env scripts/migrate.mjs"
 
 [tasks.seed]

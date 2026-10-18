@@ -12,7 +12,8 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { close, counts, describeTarget, sql } from "../server/db.ts";
+import { close, counts, describeTarget, serverInfo } from "../server/db.ts";
+import { isDbChoice, selectedDb } from "../server/db-select.ts";
 
 const API_PORT = Number(process.env.API_PORT ?? 4000);
 const WEB_PORT = Number(process.env.PORT ?? 3000);
@@ -73,14 +74,22 @@ existsSync(".env")
     );
 
 // 4. Dependencies
-const needed = ["next", "react", "express", "postgres", "recharts"];
+const needed = ["next", "react", "express", "postgres", "mongodb", "recharts"];
 const missing = needed.filter((p) => !existsSync(`node_modules/${p}`));
 missing.length === 0
   ? add("ok", "Dependencies", `${needed.length} key packages present`)
   : add("fail", "Dependencies", `missing ${missing.join(", ")}`, "Run `mise run setup`.");
 
-// 5. Supabase, 6. the schema, and whether it holds anything
-if (!process.env.DATABASE_URL) {
+// 5. The database named by DB_SELECT, and whether it holds anything
+const chosen = selectedDb();
+if (!isDbChoice(chosen)) {
+  add(
+    "fail",
+    "DB_SELECT",
+    chosen ? `"${chosen}"` : "not set",
+    'Set DB_SELECT to supabase or mongodb in .env.',
+  );
+} else if (chosen === "supabase" && !process.env.DATABASE_URL) {
   add(
     "fail",
     "Supabase",
@@ -88,22 +97,23 @@ if (!process.env.DATABASE_URL) {
     "Supabase dashboard → Project Settings → Database → Connection string → URI, then paste it into .env.",
   );
 } else {
+  const label = chosen === "supabase" ? "Supabase" : "MongoDB";
   try {
-    const [{ version }] = await sql()`select version()`;
-    add("ok", "Supabase", `${describeTarget()} · ${version.split(" ").slice(0, 2).join(" ")}`);
+    const version = await serverInfo();
+    add("ok", label, `${describeTarget()} · ${version}`);
 
     try {
       const n = await counts();
       n.categories > 0
         ? add("ok", "Data", `${n.categories} categories, ${n.items} items, ${n.bills} bills`)
-        : add("warn", "Data", "tables are empty", "Run `mise run seed` to load the starter inventory and demo bills.");
+        : add("warn", "Data", "database is empty", "Run `mise run seed` to load the starter inventory and demo bills.");
     } catch (e) {
       e.code === "42P01"
         ? add("fail", "Schema", "tables are missing", "Run `mise run migrate` to apply supabase/schema.sql.")
         : add("fail", "Schema", e.message.split("\n")[0]);
     }
   } catch (e) {
-    add("fail", "Supabase", `cannot reach ${describeTarget()}`, e.message.split("\n")[0]);
+    add("fail", label, `cannot reach ${describeTarget()}`, e.message.split("\n")[0]);
   } finally {
     await close().catch(() => {});
   }

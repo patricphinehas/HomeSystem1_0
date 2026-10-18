@@ -1,8 +1,8 @@
 /**
  * The inventory a fresh database starts with: six categories, 28 items, no tags.
  *
- * This is seed data, not storage — the live inventory lives in Postgres
- * (`categories` and `items`) from the moment `pnpm seed` runs.
+ * This is seed data, not storage — the live inventory lives in whichever
+ * database DB_SELECT names, from the moment `pnpm seed` runs.
  */
 
 export const STARTER_CATEGORIES = [
