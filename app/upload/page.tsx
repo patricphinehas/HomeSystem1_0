@@ -1,0 +1,372 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { CheckCircle, Plus, Receipt, TrendUp, Trash } from "@phosphor-icons/react";
+import type { Analytics } from "@/lib/analytics";
+import { itemKey } from "@/lib/analytics";
+import { compareWithHistory, normalizeBill, today, type BillInput, type PriceRef, type StoredBill } from "@/lib/bill";
+import { inr, perUnit, pct } from "@/lib/money";
+import { COMMON_UNITS, cheapest, unitPrice } from "@/lib/units";
+import { useInventory } from "../use-inventory";
+import { useJson } from "../use-api";
+import { Card, Notice } from "../ui";
+
+type Row = { id: number; name: string; qty: string; unit: string; cost: string };
+
+let nextRowId = 1;
+const blankRow = (unit = "kg"): Row => ({ id: nextRowId++, name: "", qty: "", unit, cost: "" });
+
+type Verdict = ReturnType<typeof compareWithHistory>["verdict"];
+
+const VERDICT: Record<Verdict, { label: (p: { vsLast?: number; vsBest?: number }) => string; tone: string }> = {
+  best: { label: () => "Best price yet", tone: "text-accent" },
+  cheaper: { label: (p) => `${pct(p.vsLast)} vs last`, tone: "text-accent" },
+  same: { label: () => "Same as last time", tone: "text-muted" },
+  pricier: { label: (p) => `${pct(p.vsLast)} vs last`, tone: "text-warn" },
+  new: { label: () => "First time bought", tone: "text-muted" },
+};
+
+export default function EnterBill() {
+  const { inv } = useInventory();
+  const { data: analytics, reload: reloadPrices } = useJson<Analytics>("/api/analytics");
+  const { data: recent, error: recentError, reload: reloadBills } = useJson<{ bills: StoredBill[] }>("/api/bills?limit=8");
+
+  // Deferred to an effect: with cacheComponents on, reading the clock during a
+  // client component's prerender is an error (the value would be baked in).
+  const [date, setDate] = useState("");
+  useEffect(() => setDate(today()), []);
+
+  const [store, setStore] = useState("");
+  const [note, setNote] = useState("");
+  const [rows, setRows] = useState<Row[]>([blankRow()]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<{ total: number; comparisons: Comparison[] } | null>(null);
+
+  // Typing a name that exists in the inventory links the purchase to that item,
+  // which is what lets the analytics page group spend by category and by tag.
+  const known = useMemo(() => {
+    const map = new Map<string, { itemId: string; category: string; unit: string }>();
+    for (const c of inv?.categories ?? [])
+      for (const i of c.items) map.set(itemKey(i.name), { itemId: i.id, category: c.name, unit: i.unit });
+    return map;
+  }, [inv]);
+
+  const names = useMemo(
+    () => (inv?.categories ?? []).flatMap((c) => c.items.map((i) => i.name)).sort(),
+    [inv],
+  );
+
+  const priceBook = (analytics?.priceBook ?? {}) as Record<string, PriceRef>;
+  const units = [...new Set([...COMMON_UNITS, ...[...known.values()].map((k) => k.unit)])];
+  const stores = [...new Set((recent?.bills ?? []).map((b) => b.store))];
+
+  const priced = rows.map((row) => {
+    const match = known.get(itemKey(row.name));
+    const price = unitPrice(Number(row.qty), row.unit, Number(row.cost));
+    return { row, match, price, cost: Number(row.cost) || 0 };
+  });
+
+  // Same item twice in one bill (a 500 g pouch and a 5 kg sack): flag which
+  // size actually costs less per kg.
+  const bestInBill = new Map<string, number>();
+  for (const key of new Set(priced.map((p) => itemKey(p.row.name)).filter(Boolean))) {
+    const options = priced.filter((p) => itemKey(p.row.name) === key && p.price);
+    if (options.length < 2) continue;
+    const best = cheapest(options.map((o) => ({ id: o.row.id, base: o.price!.base, price: o.price!.price })));
+    if (best) bestInBill.set(key, best.id);
+  }
+
+  const total = priced.reduce((t, p) => t + (Number.isFinite(p.cost) ? p.cost : 0), 0);
+  const filled = rows.filter((r) => r.name.trim() !== "");
+
+  const patch = (id: number, next: Partial<Row>) =>
+    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...next } : r)));
+
+  const onName = (id: number, name: string) => {
+    const match = known.get(itemKey(name));
+    // Adopt the inventory's unit for a known item, unless the row was edited.
+    patch(id, match ? { name, unit: match.unit } : { name });
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    const draft: BillInput = {
+      date,
+      store,
+      note,
+      items: filled.map(({ name, qty, unit, cost }) => {
+        const match = known.get(itemKey(name));
+        return { name, qty, unit, cost, itemId: match?.itemId ?? null, category: match?.category ?? null };
+      }),
+    };
+
+    // The API validates too; checking here first keeps the error next to the field.
+    const check = normalizeBill(draft);
+    if ("error" in check) return setError(check.error);
+
+    setSaving(true);
+    try {
+      const res = await fetch("/api/bills", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(draft),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error || res.statusText);
+
+      setSaved({ total: body.bill.total, comparisons: body.comparisons });
+      setRows([blankRow()]);
+      setNote("");
+      reloadPrices();
+      reloadBills();
+    } catch (err) {
+      setError((err as Error).message || "Could not save the bill.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="grid gap-6">
+      <header>
+        <h1 className="text-2xl font-semibold tracking-tight">Enter bill</h1>
+        <p className="mt-1 text-sm text-muted">
+          Quantity, unit and what you paid. Everything is reduced to a price per kg, litre or piece, so
+          today&rsquo;s shop can be compared with the last one.
+        </p>
+      </header>
+
+      {error && <Notice>{error}</Notice>}
+      {saved && (
+        <Card
+          title="Bill saved"
+          subtitle={`${inr(saved.total, 2)} · ${saved.comparisons.length} items`}
+          aside={
+            <Link href="/analytics" className="text-sm text-accent hover:underline">
+              See analytics
+            </Link>
+          }
+        >
+          <ul className="grid gap-1.5 text-sm">
+            {saved.comparisons.map((c) => (
+              <li key={c.name} className="flex flex-wrap items-baseline justify-between gap-2">
+                <span className="flex items-center gap-1.5">
+                  {c.verdict === "best" && <CheckCircle size={14} className="text-accent" aria-hidden />}
+                  {c.verdict === "pricier" && <TrendUp size={14} className="text-warn" aria-hidden />}
+                  {c.name}
+                </span>
+                <span className="font-mono text-xs tabular-nums text-muted">
+                  {perUnit(c.unitPrice, c.base)}
+                  <span className={`ml-2 ${VERDICT[c.verdict].tone}`}>{VERDICT[c.verdict].label(c)}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
+      <form onSubmit={submit} className="grid gap-4">
+        <div className="grid gap-3 sm:grid-cols-[10rem_1fr]">
+          <label className="grid gap-1 text-xs text-muted">
+            Bill date
+            <input
+              type="date"
+              required
+              max={date || undefined}
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-fg"
+            />
+          </label>
+          <label className="grid gap-1 text-xs text-muted">
+            Shop
+            <input
+              required
+              list="store-suggestions"
+              value={store}
+              onChange={(e) => setStore(e.target.value)}
+              placeholder="Where did you buy this?"
+              className="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-fg placeholder:text-muted"
+            />
+            <datalist id="store-suggestions">
+              {stores.map((s) => (
+                <option key={s} value={s} />
+              ))}
+            </datalist>
+          </label>
+        </div>
+
+        <div className="overflow-hidden rounded-xl border border-border bg-surface">
+          <div className="flex items-center justify-between gap-3 px-4 py-2.5 text-xs text-muted">
+            <span>Items</span>
+            <span className="hidden sm:block">quantity · unit · what you paid</span>
+          </div>
+
+          <ul>
+            {priced.map(({ row, match, price }) => {
+              const ref = priceBook[itemKey(row.name)];
+              const comparison = price ? compareWithHistory({ base: price.base, unitPrice: price.price }, ref) : null;
+              const isBestInBill = bestInBill.get(itemKey(row.name)) === row.id;
+
+              return (
+                <li key={row.id} className="border-t border-border px-3 py-2.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      aria-label="Item"
+                      list="item-suggestions"
+                      value={row.name}
+                      onChange={(e) => onName(row.id, e.target.value)}
+                      placeholder="Item"
+                      className="min-w-32 flex-1 rounded-xl border border-border bg-bg px-3 py-1.5 text-sm placeholder:text-muted"
+                    />
+                    <input
+                      aria-label={`Quantity of ${row.name || "item"}`}
+                      type="number"
+                      min={0}
+                      step="any"
+                      inputMode="decimal"
+                      value={row.qty}
+                      onChange={(e) => patch(row.id, { qty: e.target.value })}
+                      placeholder="qty"
+                      className="w-20 rounded-xl border border-border bg-bg px-2 py-1.5 text-center font-mono text-sm tabular-nums placeholder:font-sans placeholder:text-muted"
+                    />
+                    <input
+                      aria-label={`Unit for ${row.name || "item"}`}
+                      list="unit-suggestions"
+                      value={row.unit}
+                      onChange={(e) => patch(row.id, { unit: e.target.value })}
+                      className="w-20 rounded-xl border border-border bg-bg px-2 py-1.5 text-center text-sm"
+                    />
+                    <input
+                      aria-label={`Amount paid for ${row.name || "item"}`}
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      inputMode="decimal"
+                      value={row.cost}
+                      onChange={(e) => patch(row.id, { cost: e.target.value })}
+                      placeholder="₹"
+                      className="w-24 rounded-xl border border-border bg-bg px-2 py-1.5 text-right font-mono text-sm tabular-nums placeholder:font-sans placeholder:text-muted"
+                    />
+                    <button
+                      type="button"
+                      aria-label="Remove this line"
+                      disabled={rows.length === 1}
+                      onClick={() => setRows((rs) => rs.filter((r) => r.id !== row.id))}
+                      className="grid size-8 place-items-center rounded-xl text-muted hover:text-warn disabled:opacity-30"
+                    >
+                      <Trash size={15} />
+                    </button>
+                  </div>
+
+                  {price && (
+                    <p className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 pl-1 text-xs">
+                      <span className="font-mono tabular-nums">{perUnit(price.price, price.base)}</span>
+                      {comparison && (
+                        <span className={VERDICT[comparison.verdict].tone}>
+                          {VERDICT[comparison.verdict].label(comparison)}
+                          {ref && comparison.verdict !== "new" && (
+                            <span className="ml-1 text-muted">
+                              (best {perUnit(ref.best, ref.base)}, last {perUnit(ref.last, ref.base)})
+                            </span>
+                          )}
+                        </span>
+                      )}
+                      {isBestInBill && <span className="text-accent">cheapest size on this bill</span>}
+                      {!price.known && <span className="text-muted">priced per {price.base}</span>}
+                      {!match && row.name.trim() && <span className="text-muted">not in inventory</span>}
+                    </p>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+
+          <datalist id="item-suggestions">
+            {names.map((name) => (
+              <option key={name} value={name} />
+            ))}
+          </datalist>
+          <datalist id="unit-suggestions">
+            {units.map((u) => (
+              <option key={u} value={u} />
+            ))}
+          </datalist>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-bg px-3 py-3">
+            <button
+              type="button"
+              onClick={() => setRows((rs) => [...rs, blankRow(rs[rs.length - 1]?.unit)])}
+              className="flex items-center gap-1.5 rounded-xl border border-border bg-surface px-3 py-1.5 text-sm transition active:scale-[0.98]"
+            >
+              <Plus size={14} weight="bold" />
+              Add item
+            </button>
+            <p className="text-sm text-muted">
+              Bill total <span className="ml-1 font-mono text-base tabular-nums text-fg">{inr(total, 2)}</span>
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <input
+            aria-label="Note"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Note (optional)"
+            className="min-w-0 flex-1 rounded-xl border border-border bg-surface px-3 py-2 text-sm placeholder:text-muted"
+          />
+          <button
+            type="submit"
+            disabled={saving || filled.length === 0}
+            className="flex items-center gap-2 rounded-xl bg-accent px-4 py-2 text-sm font-medium text-surface transition active:scale-[0.98] disabled:opacity-40"
+          >
+            <Receipt size={16} />
+            {saving ? "Saving…" : `Save bill (${filled.length})`}
+          </button>
+        </div>
+      </form>
+
+      <Card
+        title="Recent bills"
+        subtitle={recent ? `${recent.bills.length} most recent` : "Loading…"}
+        aside={
+          <Link href="/analytics" className="text-sm text-accent hover:underline">
+            Analytics
+          </Link>
+        }
+      >
+        {recentError && <Notice>{recentError}</Notice>}
+        {recent?.bills.length === 0 && <p className="text-sm text-muted">No bills yet. The first one starts the price history.</p>}
+        {recent && recent.bills.length > 0 && (
+          <ul className="divide-y divide-border">
+            {recent.bills.map((bill) => (
+              <li key={bill.id} className="flex flex-wrap items-baseline justify-between gap-2 py-2 text-sm first:pt-0">
+                <span>
+                  {bill.store}
+                  <span className="ml-2 text-xs text-muted">
+                    {bill.date} · {bill.items.length} items
+                  </span>
+                </span>
+                <span className="font-mono text-xs tabular-nums">{inr(bill.total, 2)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+type Comparison = {
+  name: string;
+  unitPrice: number;
+  base: string;
+  verdict: Verdict;
+  vsBest?: number;
+  vsLast?: number;
+};

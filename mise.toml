@@ -1,0 +1,48 @@
+# Toolchain and tasks for Home System.
+#
+# mise itself: https://mise.jdx.dev — `winget install jdx.mise` on Windows,
+# `curl https://mise.run | sh` elsewhere. Then:
+#
+#   mise run setup      install the toolchain and the dependencies
+#   mise run doctor      check everything the app needs is present
+#   mise run seed        load the starter inventory and demo bills
+#   mise run develop     run the pages and the data API together
+#
+# `mise tasks` lists them all.
+
+[tools]
+# Node 22.18+ is a hard requirement: server/ and scripts/ are TypeScript run
+# without a build step, which relies on Node's own type stripping.
+node = "24"
+pnpm = "12.14.0"
+
+[env]
+# The app's defaults, in one place. Point MONGODB_URI elsewhere to use a
+# different database without touching the code.
+MONGODB_URI = "mongodb://127.0.0.1:27017"
+MONGODB_DB = "homesystem"
+API_PORT = "4000"
+
+[tasks.setup]
+description = "Install the pinned toolchain and the project's dependencies"
+run = ["mise install", "pnpm install"]
+
+[tasks.doctor]
+description = "Check the toolchain, dependencies, database and ports"
+run = "node scripts/doctor.mjs"
+
+[tasks.seed]
+description = "Load the starter inventory and demo bills (pass -- --clear to replace)"
+run = "node scripts/seed.mjs"
+
+[tasks.develop]
+description = "Run the pages on :3000 and the data API on :4000"
+run = "node scripts/dev.mjs"
+
+[tasks.check]
+description = "Run the test suite"
+run = "node --test \"lib/*.test.ts\""
+
+[tasks.build]
+description = "Production build of the pages"
+run = "pnpm exec next build"
