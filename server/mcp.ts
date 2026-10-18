@@ -18,14 +18,19 @@ import type { Request, Response } from "express";
 import { analyse, itemReport } from "../lib/analytics.ts";
 import { normalizeBill } from "../lib/bill.ts";
 import { allInventoryItems } from "../lib/match-inventory.ts";
-import { isLow, lowStock, totals } from "../lib/inventory.ts";
+import { isLow, lowStock, newId, totals } from "../lib/inventory.ts";
+import { addPerson, blankEvent, normalizeCalendar, todayISO, upcoming } from "../lib/calendar.ts";
+import { familyNames } from "../lib/family.ts";
 import type { Item } from "../lib/inventory.ts";
 import {
   insertBills,
   readBills,
+  readCalendar,
+  readFamily,
   readInventory,
   readLines,
   readSubscriptions,
+  writeCalendar,
   writeInventory,
 } from "./db.ts";
 
@@ -203,6 +208,88 @@ export const TOOLS: Tool[] = [
     description: "Every subscription the household pays for, with its type, holder and shared seats.",
     inputSchema: { type: "object", properties: {} },
     run: async () => await readSubscriptions(),
+  },
+  {
+    name: "list_family",
+    description: "Who lives in this household, with their role. These are the names calendar entries use.",
+    inputSchema: { type: "object", properties: {} },
+    run: async () => await readFamily(),
+  },
+  {
+    name: "list_events",
+    description:
+      "What the family has planned. Returns what is still to come by default; pass a date range to see any window.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        from: { type: "string", description: "yyyy-mm-dd. Defaults to today." },
+        to: { type: "string", description: "yyyy-mm-dd. Open-ended when left out." },
+        limit: { type: "number", description: "How many events, 1 to 100. Default 20." },
+      },
+    },
+    run: async (args) => {
+      const from = str(args, "from") || todayISO();
+      const to = str(args, "to");
+      const limit = Math.min(Math.max(num(args, "limit", 20), 1), 100);
+      const { events } = await readCalendar();
+      const window = to ? events.filter((e) => e.date <= to) : events;
+      return { from, to: to || null, events: upcoming(window, from, limit) };
+    },
+  },
+  {
+    name: "add_event",
+    description:
+      "Put something on the family calendar — a movie night, a birthday, a visit. One occurrence; there is no recurrence. Everything but the title is optional.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "What it is." },
+        date: { type: "string", description: "yyyy-mm-dd. Defaults to today." },
+        time: { type: "string", description: "HH:MM, 24-hour. Leave out for an all-day event." },
+        endTime: { type: "string", description: "HH:MM, after the start time and on the same day." },
+        kind: { type: "string", description: "The activity: movie, dinner, trip, party, appointment..." },
+        venue: { type: "string", description: "Where it is — the cinema, the restaurant, the house." },
+        link: { type: "string", description: "Tickets, the booking, the invite." },
+        people: {
+          type: "array",
+          description: "Who is included, by name.",
+          items: { type: "string" },
+        },
+        reservation: {
+          type: "string",
+          description: 'Booking status: "needed", "booked", or left out when none is needed.',
+          enum: ["", "needed", "booked"],
+        },
+        reservedUnder: { type: "string", description: "Whose name the booking is in." },
+        createdBy: { type: "string", description: "Who is adding it. Only they can edit it afterwards." },
+        notes: { type: "string" },
+      },
+      required: ["title"],
+    },
+    run: async (args) => {
+      const invited = Array.isArray(args.people) ? args.people : String(args.people ?? "").split(",");
+      const event = blankEvent(newId(), str(args, "date") || todayISO(), {
+        title: str(args, "title"),
+        time: str(args, "time"),
+        endTime: str(args, "endTime"),
+        kind: str(args, "kind"),
+        venue: str(args, "venue"),
+        link: str(args, "link"),
+        people: invited.reduce<string[]>((people, name) => addPerson(people, String(name)), []),
+        reservation: str(args, "reservation") as ReturnType<typeof blankEvent>["reservation"],
+        reservedUnder: str(args, "reservedUnder"),
+        createdBy: str(args, "createdBy"),
+        notes: str(args, "notes"),
+      });
+      if (!event.title) throw new Error("title is required.");
+      const { events } = await readCalendar();
+      // The whole calendar goes back through the same gate the API uses, so a
+      // model cannot write an event the page would refuse.
+      const result = normalizeCalendar({ events: [...events, event] });
+      if ("error" in result) throw new Error(result.error);
+      await writeCalendar(result.doc);
+      return { added: result.doc.events.find((e) => e.id === event.id), total: result.doc.events.length };
+    },
   },
 ];
 

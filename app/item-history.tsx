@@ -25,7 +25,12 @@ export function ItemHistory({
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => ref.current?.showModal(), []);
+  useEffect(() => {
+    // showModal() throws if the dialog is already open, and Strict Mode runs a
+    // mount effect twice in development.
+    const dialog = ref.current;
+    if (dialog && !dialog.open) dialog.showModal();
+  }, []);
 
   const report = itemReport(lines, { id: item.id, name: item.name });
 

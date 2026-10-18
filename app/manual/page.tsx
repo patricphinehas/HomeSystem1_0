@@ -33,6 +33,7 @@ const CONTENTS = [
   ["upload", "Entering a bill"],
   ["analytics", "Analytics"],
   ["subscriptions", "Subscriptions"],
+  ["calendar", "Calendar"],
   ["mcp", "MCP tools and chat"],
   ["settings", "Settings"],
   ["prices", "How prices are compared"],
@@ -146,18 +147,54 @@ export default function ManualPage() {
         </p>
       </Section>
 
-      <Section id="mcp" title="MCP tools and chat">
+      <Section id="calendar" title="Calendar">
         <p>
-          <Link href="/mcp" className="text-accent hover:underline">MCP tools</Link> exposes the household data as
-          Model Context Protocol tools: reading inventory and low stock, setting a quantity, recording a bill, pulling
-          spend and the price history of one item. The page lists each tool with its arguments and gives you the block
-          to paste into an MCP client.
+          <Link href="/calendar" className="text-accent hover:underline">Calendar</Link> is the shared one — movie
+          nights, birthdays, visitors, anything the house plans together. Click a day in the grid to list it beside the calendar, then press <strong>Add</strong> for a new entry:
+          the <strong>activity</strong> you are blocking the day for, a title, a start time and roughly how long it
+          runs. Leave the time empty and it sits at the top of the day as an all-day entry. Pick a duration and the end
+          time is filled in for you — only the end time is kept, so you can always correct it directly.
         </p>
         <p>
-          The chat window on the same page calls those same tools for you. Pick the engine in the dropdown — a local{" "}
+          Opening an entry — click it in the grid, in the day's list, or in <strong>Coming up</strong> — gives you the rest of it:
+          where it is, a link (for a movie that is the theatre and the ticket page; for a dinner, the restaurant and
+          the booking), whether it <strong>needs a booking</strong> or is already reserved and whose name it is under,
+          notes, and the comments.
+        </p>
+        <p>
+          <strong>Who is coming</strong> is a list of names. Everyone in <Key>Settings → Family</Key> is offered as a
+          one-click button, and anyone else can be typed in — both work, and commas add several at once.
+          Each person then has <strong>In</strong>, <strong>Maybe</strong> and <strong>Out</strong>; clicking the answer
+          they already gave takes it back to no answer. Comments are signed with your name from settings.
+        </p>
+        <p>
+          Whoever added an entry is the one who can change it. Everyone else opens the same entry and sees the detail
+          written out, with the answer buttons and the comment box still working — which is the part a guest is
+          there for. There is no sign-in yet, so that is a courtesy rather than a lock: a name here is a label, not an
+          identity, and nothing stops one person answering for another.
+        </p>
+        <p>
+          There is no repeat. An entry is one occurrence, so a weekly game night is added week by week, and an evening
+          that runs past midnight is two entries. Repeating events mean recurrence rules, timezones and daylight
+          saving, and that is a far bigger thing than this page is; if you need it, say so and it gets built properly
+          rather than half-built. The chat on the MCP page can read and add to the calendar too — ask it when the
+          next movie night is.
+        </p>
+      </Section>
+
+      <Section id="mcp" title="MCP tools and chat">
+        <p>
+          <Link href="/mcp" className="text-accent hover:underline">MCP tools</Link> is two tabs.{" "}
+          <strong>Tools &amp; clients</strong> exposes the household data as Model Context Protocol tools: reading
+          inventory and low stock, setting a quantity, recording a bill, pulling spend and the price history of one
+          item, listing the family and the calendar, and adding to it. It lists each tool with its arguments and gives
+          you the block to paste into an MCP client.
+        </p>
+        <p>
+          <strong>Chat</strong>, the other tab, calls those same tools for you. Pick the engine in the dropdown — a local{" "}
           <strong>Ollama</strong>, <strong>NVIDIA NIM</strong> for Nemotron, or <strong>OpenRouter</strong> for anything
-          hosted — and ask in plain words. Each tool call is shown as it happens, so you can open one and check the
-          numbers the answer was built from. A local Ollama model must support tool calling, or it will answer from
+          hosted — and ask in plain words. Answers come back formatted: lists, emphasis, tables and clickable links.
+          Each tool call is shown as it happens, so you can open one and check the numbers the answer was built from. A local Ollama model must support tool calling, or it will answer from
           nothing.
         </p>
         <p>
@@ -167,9 +204,25 @@ export default function ManualPage() {
 
       <Section id="settings" title="Settings">
         <p>
-          <Link href="/settings" className="text-accent hover:underline">Settings</Link> writes to{" "}
-          <Key>.env</Key> in the project root. <strong>Theme</strong> is the exception and stays in this browser:
-          system, light or dark.
+          <Link href="/settings" className="text-accent hover:underline">Settings</Link> is six tabs:{" "}
+          <strong>You</strong>, <strong>Family</strong>, <strong>Region</strong>, <strong>Database</strong>,{" "}
+          <strong>Inference</strong> and <strong>Appearance</strong>. All but Family and Appearance write to{" "}
+          <Key>.env</Key> in the project root and share the <em>Save to .env</em> button at the bottom; a dot on a tab
+          means it is holding a change you have not saved.
+        </p>
+        <p>
+          <strong>Region</strong> is how everything is written: the locale (<Key>en-IN</Key>, <Key>en-GB</Key>,{" "}
+          <Key>de-DE</Key>…) for dates and number grouping, the currency for every price, and an IANA timezone for
+          what “today” means — leave that empty and today is today wherever you are reading. Changing the
+          currency does not convert anything already recorded; it changes how it is written. A value Intl cannot use
+          is refused on save rather than quietly ignored.
+        </p>
+        <p>
+          The other two save themselves. <strong>Family</strong> is who lives here — a name and a role each —
+          and it is a collection in the database rather than a setting, because the calendar points at these people by
+          name. It saves as you type. Two people cannot share a name: an invitation and its answer are keyed by the
+          name, so a duplicate would make two people one. <strong>Appearance</strong> is the theme, and it never
+          leaves this browser: system, light or dark.
         </p>
         <p>
           Switching <Key>DB_SELECT</Key> between MongoDB and Supabase takes effect immediately, as long as the other one

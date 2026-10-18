@@ -8,6 +8,10 @@
  *   GET  /api/analytics   spend, projection, deviation and inflation
  *   GET  /api/subscriptions   household subscriptions
  *   PUT  /api/subscriptions   replace subscriptions
+ *   GET  /api/calendar    the shared family calendar
+ *   PUT  /api/calendar    replace it
+ *   GET  /api/family      who lives here
+ *   PUT  /api/family      replace them
  *   GET  /api/mcp         the tools this server exposes, and the servers in .mcp.json
  *   POST /api/mcp         MCP itself, JSON-RPC (see mcp.ts)
  *   POST /api/chat        one chat turn against the configured model, tools included
@@ -27,6 +31,8 @@ import { compareWithHistory, normalizeBills } from "../lib/bill.ts";
 import type { PriceRef } from "../lib/bill.ts";
 import { normalizeInventory } from "../lib/inventory.ts";
 import { normalizeSubscriptions } from "../lib/subscriptions.ts";
+import { normalizeCalendar } from "../lib/calendar.ts";
+import { normalizeFamily } from "../lib/family.ts";
 import { chat, currentProvider, describeProviders, isProvider } from "./chat.ts";
 import { mcpEndpoint, mcpInfo } from "./mcp.ts";
 import { readSettings, writeSettings } from "./settings.ts";
@@ -35,9 +41,13 @@ import {
   describeTarget,
   insertBills,
   readBills,
+  readCalendar,
+  readFamily,
   readInventory,
   readLines,
   readSubscriptions,
+  writeCalendar,
+  writeFamily,
   writeInventory,
   writeSubscriptions,
 } from "./db.ts";
@@ -111,6 +121,28 @@ app.put("/api/subscriptions", async (req, res) => {
   if ("error" in result) return res.status(400).json({ error: result.error });
   await writeSubscriptions(result.doc);
   res.json({ ok: true, count: result.doc.subscriptions.length });
+});
+
+app.get("/api/calendar", async (_req, res) => {
+  res.json(await readCalendar());
+});
+
+app.put("/api/calendar", async (req, res) => {
+  const result = normalizeCalendar(req.body);
+  if ("error" in result) return res.status(400).json({ error: result.error });
+  await writeCalendar(result.doc);
+  res.json({ ok: true, count: result.doc.events.length });
+});
+
+app.get("/api/family", async (_req, res) => {
+  res.json(await readFamily());
+});
+
+app.put("/api/family", async (req, res) => {
+  const result = normalizeFamily(req.body);
+  if ("error" in result) return res.status(400).json({ error: result.error });
+  await writeFamily(result.doc);
+  res.json({ ok: true, count: result.doc.people.length });
 });
 
 app.get("/api/mcp", (_req, res) => {

@@ -165,3 +165,41 @@ export function TagEditor({
     </div>
   );
 }
+
+/**
+ * A row of tabs. Used by /settings and /mcp, which are both one page holding
+ * several unrelated things — the alternative was a long scroll of cards.
+ * `dot` marks a tab with something waiting on it, such as an unsaved change.
+ */
+export function Tabs<T extends string>({
+  tabs,
+  current,
+  onChange,
+  label,
+}: {
+  tabs: readonly { id: T; title: string; dot?: boolean }[];
+  current: T;
+  onChange: (id: T) => void;
+  /** What this set of tabs is for, for a screen reader. */
+  label: string;
+}) {
+  return (
+    <div role="tablist" aria-label={label} className="flex flex-wrap gap-1 rounded-xl border border-border bg-surface p-1">
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          role="tab"
+          aria-selected={current === tab.id}
+          onClick={() => onChange(tab.id)}
+          className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition ${
+            current === tab.id ? "bg-accent-soft font-medium text-accent" : "text-muted hover:text-fg"
+          }`}
+        >
+          {tab.title}
+          {tab.dot && <span aria-label="unsaved changes" className="size-1.5 rounded-full bg-warn" />}
+        </button>
+      ))}
+    </div>
+  );
+}

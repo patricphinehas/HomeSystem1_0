@@ -28,7 +28,10 @@ export const PROVIDERS: Record<ProviderId, { label: string; base: () => string; 
     base: () => env("NVIDIA_URL", "https://integrate.api.nvidia.com/v1").replace(/\/+$/, ""),
     key: () => env("NVIDIA_API_KEY"),
     keyField: "NVIDIA_API_KEY",
-    model: () => env("NVIDIA_MODEL", "nvidia/llama-3.3-nemotron-super-49b-v1.5"),
+    // NVIDIA retires models from the catalogue and the endpoint then answers
+    // 410 Gone, so this default has a shelf life. GET /v1/models with the key
+    // lists what the account can actually call today.
+    model: () => env("NVIDIA_MODEL", "nvidia/nemotron-3-super-120b-a12b"),
   },
   openrouter: {
     label: "OpenRouter",
@@ -75,6 +78,15 @@ Answer in a couple of sentences unless asked for detail, and say plainly when a 
 const MAX_TOOL_CHARS = 6000;
 const MAX_ROUNDS = 5;
 
+/**
+ * Per model call. A reasoning model with a couple of tool rounds takes ten or
+ * fifteen seconds, so this is generous — it is here to end a hang, not to
+ * hurry anything. Without it a provider that never answers holds the request
+ * open until something else gives up, and what the browser then sees is an
+ * opaque 500 from the proxy rather than a sentence saying what happened.
+ */
+const TIMEOUT_MS = 90_000;
+
 const trim = (text: string) =>
   text.length <= MAX_TOOL_CHARS ? text : `${text.slice(0, MAX_TOOL_CHARS)}\n...[truncated, ask for a narrower slice]`;
 
@@ -90,6 +102,7 @@ async function complete(id: ProviderId, messages: ChatMessage[]): Promise<ChatMe
     response = await fetch(`${provider.base()}/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json", ...(key ? { authorization: `Bearer ${key}` } : {}) },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
       body: JSON.stringify({
         model: provider.model(),
         messages,
@@ -98,13 +111,29 @@ async function complete(id: ProviderId, messages: ChatMessage[]): Promise<ChatMe
       }),
     });
   } catch (e) {
-    throw new Error(`Cannot reach ${provider.label} at ${provider.base()}. (${(e as Error).message})`);
+    const error = e as Error;
+    if (error.name === "TimeoutError" || error.name === "AbortError") {
+      throw new Error(`${provider.label} did not answer within ${TIMEOUT_MS / 1000} seconds. Try a narrower question.`);
+    }
+    throw new Error(`Cannot reach ${provider.label} at ${provider.base()}. (${error.message})`);
   }
 
-  const body = await response.json().catch(() => null);
+  // Read as text first: an error body is not always JSON, and throwing away
+  // what the provider actually said leaves you with a bare "Gone".
+  const raw = await response.text();
+  let body: { choices?: { message?: ChatMessage }[]; error?: { message?: string }; detail?: string; message?: string } | null =
+    null;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    // Not JSON. `raw` is the whole of what came back, and that is the message.
+  }
+
   if (!response.ok) {
-    const detail = body?.error?.message ?? body?.message ?? response.statusText;
-    throw new Error(`${provider.label} refused the request: ${detail}`);
+    const detail = body?.error?.message ?? body?.detail ?? body?.message ?? (raw.slice(0, 300) || response.statusText);
+    throw new Error(
+      `${provider.label} refused "${provider.model()}" (${response.status} ${response.statusText}): ${detail}`,
+    );
   }
 
   const message = body?.choices?.[0]?.message;

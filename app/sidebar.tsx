@@ -3,8 +3,10 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useHousehold } from "./use-household";
 import {
   BookOpen,
+  CalendarBlank,
   ChartLine,
   Gear,
   HardDrives,
@@ -23,6 +25,7 @@ const links = [
   { href: "/control", label: "Home control", icon: HardDrives },
   { href: "/inventory", label: "Inventory management", icon: Package },
   { href: "/subscriptions", label: "Subscriptions", icon: Repeat },
+  { href: "/calendar", label: "Calendar", icon: CalendarBlank },
   { href: "/upload", label: "Enter bill", icon: Receipt },
   { href: "/analytics", label: "Analytics", icon: ChartLine },
   { href: "/mcp", label: "MCP tools", icon: Plugs },
@@ -131,24 +134,6 @@ function NavLink({
       {label}
     </Link>
   );
-}
-
-function useHousehold() {
-  const [name, setName] = useState("");
-  const [household, setHousehold] = useState("");
-
-  useEffect(() => {
-    fetch("/api/settings")
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((data: { fields?: { key: string; value: string }[] }) => {
-        const fields = data.fields ?? [];
-        setName(fields.find((f) => f.key === "USER_NAME")?.value ?? "");
-        setHousehold(fields.find((f) => f.key === "HOUSEHOLD_NAME")?.value ?? "");
-      })
-      .catch(() => {});
-  }, []);
-
-  return { name, household };
 }
 
 /** Name from settings. Logout is a placeholder until there is a sign-in. */

@@ -90,3 +90,56 @@ create table if not exists subscriptions (
 );
 
 alter table subscriptions enable row level security;
+
+-- The shared family calendar. One row per occurrence: there is no recurrence
+-- (see lib/calendar.ts for why). `date` and `time` are type names, hence the
+-- column names; at_time and end_time are text because '' means all day, which
+-- is not a time. rsvp and comments are jsonb: they are read and written whole
+-- with the event and never queried into.
+create table if not exists events (
+  id             text primary key,
+  on_date        date not null,
+  at_time        text not null default '',
+  end_time       text not null default '',
+  kind           text not null default '',
+  title          text not null default '',
+  venue          text not null default '',
+  link           text not null default '',
+  people         text[] not null default '{}',
+  rsvp           jsonb not null default '{}'::jsonb,
+  reservation    text not null default '',
+  reserved_under text not null default '',
+  created_by     text not null default '',
+  notes          text not null default '',
+  comments       jsonb not null default '[]'::jsonb
+);
+
+-- Added after the first cut of the table, which had only a title, a time and a
+-- single `who`. `who` is left in place: it is NOT NULL DEFAULT '' so inserts
+-- that ignore it still work, and server/db.postgres.ts reads through
+-- `fromStored`, which folds an old row's `who` into `people`.
+alter table events add column if not exists end_time       text   not null default '';
+alter table events add column if not exists kind           text   not null default '';
+alter table events add column if not exists venue          text   not null default '';
+alter table events add column if not exists link           text   not null default '';
+alter table events add column if not exists people         text[] not null default '{}';
+alter table events add column if not exists rsvp           jsonb  not null default '{}'::jsonb;
+alter table events add column if not exists reservation    text   not null default '';
+alter table events add column if not exists reserved_under text   not null default '';
+alter table events add column if not exists comments       jsonb  not null default '[]'::jsonb;
+alter table events add column if not exists created_by     text   not null default '';
+
+create index if not exists events_date_idx on events (on_date, at_time);
+
+alter table events enable row level security;
+
+-- Who lives here. The calendar points at these people by name, so this is
+-- data rather than configuration (it used to be HOUSEHOLD_PEOPLE in .env).
+create table if not exists family (
+  id       text primary key,
+  name     text not null default '',
+  role     text not null default '',
+  position integer not null default 0
+);
+
+alter table family enable row level security;

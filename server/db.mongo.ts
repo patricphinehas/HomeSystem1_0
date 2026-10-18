@@ -3,8 +3,9 @@
  * Used when DB_SELECT=mongodb.
  *
  * One document per category (`_id` is the category id, `order` is the tab
- * order, items embedded). One document per bill. Subscriptions are their own
- * collection, same shape as the API. Local standalone Mongo has no
+ * order, items embedded). One document per bill. Subscriptions and calendar
+ * events are their own collections, same shape as the API. Calendar events
+ * sort by their own date, so they carry no `order`. Local standalone Mongo has no
  * multi-document transactions, so a replace is one ordered bulk write.
  */
 
@@ -12,6 +13,9 @@ import { MongoClient, type Collection, type Db, type ObjectId } from "mongodb";
 import type { Bill, BillLine, StoredBill } from "../lib/bill.ts";
 import type { Inventory, Item } from "../lib/inventory.ts";
 import type { Subscription, SubscriptionsDoc } from "../lib/subscriptions.ts";
+import { fromStored } from "../lib/calendar.ts";
+import type { FamilyDoc, Person } from "../lib/family.ts";
+import type { CalEvent, CalendarDoc } from "../lib/calendar.ts";
 import type { Line } from "../lib/analytics.ts";
 
 const URI = process.env.MONGODB_URI ?? "mongodb://127.0.0.1:27017";
@@ -20,6 +24,8 @@ const NAME = process.env.MONGODB_DB ?? "homesystem";
 type CategoryDoc = { _id: string; name: string; items: Item[]; order: number };
 type BillDoc = Bill & { _id?: ObjectId; createdAt: Date };
 type SubscriptionDoc = Omit<Subscription, "id"> & { _id: string; order: number };
+type FamilyDoc_ = Omit<Person, "id"> & { _id: string; order: number };
+type EventDoc = Omit<CalEvent, "id"> & { _id: string; /** Replaced by `people`; still read for old documents. */ who?: string };
 
 let client: MongoClient | null = null;
 let connecting: Promise<Db> | null = null;
@@ -35,6 +41,8 @@ function connect(): Promise<Db> {
         await db.collection("bills").createIndexes([{ key: { date: -1 } }, { key: { "items.key": 1 } }]);
         await db.collection("categories").createIndexes([{ key: { order: 1 } }, { key: { "items.id": 1 } }]);
         await db.collection("subscriptions").createIndexes([{ key: { order: 1 } }]);
+        await db.collection("events").createIndexes([{ key: { date: 1, time: 1 } }]);
+        await db.collection("family").createIndexes([{ key: { order: 1 } }]);
         return db;
       })
       .catch((e) => {
@@ -50,6 +58,8 @@ const categories = async (): Promise<Collection<CategoryDoc>> => (await connect(
 const bills = async (): Promise<Collection<BillDoc>> => (await connect()).collection<BillDoc>("bills");
 const subscriptions = async (): Promise<Collection<SubscriptionDoc>> =>
   (await connect()).collection<SubscriptionDoc>("subscriptions");
+const events = async (): Promise<Collection<EventDoc>> => (await connect()).collection<EventDoc>("events");
+const family = async (): Promise<Collection<FamilyDoc_>> => (await connect()).collection<FamilyDoc_>("family");
 
 /** Reported by the API and by `doctor`, with any credentials left out. */
 export const describeTarget = () => {
@@ -140,6 +150,54 @@ export async function writeSubscriptions(doc: SubscriptionsDoc): Promise<void> {
   );
 }
 
+/* ---------------- calendar ---------------- */
+
+/* ---------------- family ---------------- */
+
+export async function readFamily(): Promise<FamilyDoc> {
+  const docs = await (await family()).find({}, { sort: { order: 1 } }).toArray();
+  return { people: docs.map(({ _id, name, role }) => ({ id: _id, name, role })) };
+}
+
+export async function writeFamily(doc: FamilyDoc): Promise<void> {
+  const keep = doc.people.map((p) => p.id);
+  await (await family()).bulkWrite(
+    [
+      ...doc.people.map((p, order) => ({
+        replaceOne: {
+          filter: { _id: p.id },
+          replacement: { _id: p.id, name: p.name, role: p.role, order },
+          upsert: true,
+        },
+      })),
+      { deleteMany: { filter: { _id: { $nin: keep } } } },
+    ],
+    { ordered: true },
+  );
+}
+
+/**
+ * Every document goes out through `fromStored`, so one written before a field
+ * existed still arrives with every key the app expects.
+ */
+export async function readCalendar(): Promise<CalendarDoc> {
+  const docs = await (await events()).find({}, { sort: { date: 1, time: 1 } }).toArray();
+  return { events: docs.map(({ _id, ...rest }) => fromStored({ ...rest, id: _id })) };
+}
+
+export async function writeCalendar(doc: CalendarDoc): Promise<void> {
+  const keep = doc.events.map((e) => e.id);
+  await (await events()).bulkWrite(
+    [
+      ...doc.events.map(({ id, ...rest }) => ({
+        replaceOne: { filter: { _id: id }, replacement: { _id: id, ...rest }, upsert: true },
+      })),
+      { deleteMany: { filter: { _id: { $nin: keep } } } },
+    ],
+    { ordered: true },
+  );
+}
+
 export async function insertBills(incoming: Bill[]): Promise<string[]> {
   const docs = incoming.map((bill) => ({ ...bill, createdAt: new Date() }));
   const { insertedIds } = await (await bills()).insertMany(docs);
@@ -183,6 +241,8 @@ export async function clear(): Promise<void> {
     (await categories()).deleteMany({}),
     (await bills()).deleteMany({}),
     (await subscriptions()).deleteMany({}),
+    (await events()).deleteMany({}),
+    (await family()).deleteMany({}),
   ]);
 }
 

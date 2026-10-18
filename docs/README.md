@@ -3,7 +3,7 @@
 Household inventory, bill entry and price analytics. A Next.js app for the
 pages, an Express API for the data, and either Supabase or MongoDB behind it —
 `DB_SELECT` in `.env` chooses. Nothing is read from or written to disk at runtime.
-Last updated: 2026-10-18.
+Last updated: 2026-10-19.
 
 ## What it does
 
@@ -12,6 +12,9 @@ Last updated: 2026-10-18.
 - **Inventory management** (`/inventory`) — one tab per category plus a **Buy next** tab. Add, rename, re-count, tag and delete items and categories inline; every edit saves immediately. The chart button on a row opens that item’s whole purchase history: price per unit over time, how often it gets bought, when it is next due, and which shop has been cheapest.
 - **Enter bill** (`/upload`) — a bill's date, shop and lines. Each line is reduced to a price per kg / litre / piece and compared with what that item has cost before.
 - **Analytics** (`/analytics`) — spend over time with a projection, where the money goes, a basket price index, per-purchase price deviations, and the biggest price moves.
+- **MCP tools** (`/mcp`) — two tabs: **Chat**, which asks the household data a question and shows every tool call it makes, and **Tools & clients**, which lists the tools with their arguments, the block to paste into an MCP client, and the servers `.mcp.json` points at.
+- **Settings** (`/settings`) — six tabs: **You**, **Family**, **Region**, **Database**, **Inference** and **Appearance**. Everything but the family list and the theme is written to `.env`; a dot on a tab says it is holding an unsaved change.
+- **Calendar** (`/calendar`) — the shared family calendar: a month grid, the chosen day's plans, and what is coming up. Clicking a day lists it beside the grid; **Add** puts a new entry on it (activity, title, start, duration). Clicking an entry — in the grid, in the day's list, or in "Coming up" — opens it in a dialog: venue, link, who is invited and what each of them has said, whether it needs a booking and whose name it is under, notes, and the comments. Whoever added an entry is the only one offered the fields; everyone else sees the same detail as text and can still answer and comment. One occurrence per entry; there is no recurrence.
 
 An item is "low" when `qty <= min`. Hitting the minimum is already a problem, so the threshold is inclusive — the one rule the test suite pins down from day one.
 
@@ -23,6 +26,7 @@ An item is "low" when `qty <= min`. Hitting the minimum is already a problem, so
 | UI | React 19.3, Tailwind 4 (`@tailwindcss/turbopack`) | No component library; the design system is ~10 CSS variables in `app/globals.css`. |
 | Charts | Recharts 3.10 | Line, pie and scatter out of the box, with SVG we can style against our own tokens. |
 | Icons | `@phosphor-icons/react` | |
+| Markdown | `react-markdown` 10 + `remark-gfm` | The chat answers in Markdown. It builds React elements and never sets innerHTML, which is the point: model output must not become markup. |
 | Motion | GSAP 3.15 (core only) | Page leave (`power2.in`) and enter (`power2.out`). Loaded with a dynamic `import()` so it is not in the first server bundle. |
 | Data API | Express 5 (`server/`) | Asked for explicitly; its own process on port 4000, and the only thing that talks to the database. |
 | Storage | `DB_SELECT` in `.env`: `supabase` or `mongodb` | Same API either way. Postgres tables in `supabase/schema.sql`; Mongo keeps a category document and a bill document. `server/db.ts` picks the driver. |
@@ -97,10 +101,18 @@ app/
     page.tsx            the tool list, the connect snippet, the servers from .mcp.json
     chat.tsx            the chat window; engine dropdown, tool calls shown inline
   manual/page.tsx       the user manual, prose only, no data fetching
-  settings/page.tsx     user, database, inference engine, theme
+  mcp/page.tsx          tabs: chat, and the tools any client can call
+  settings/page.tsx     tabs: you, family, database, inference, appearance
+  settings/family.tsx   the household list, saved as you type
+  calendar/page.tsx     month grid, the day's plans, what is coming up
+  calendar/event-dialog.tsx  one entry in full, in a <dialog>
   theme.tsx             system / light / dark, localStorage, no server involvement
-  ui.tsx                Stepper, Skeleton, Notice, Card, TagEditor
+  ui.tsx                Stepper, Skeleton, Notice, Card, TagEditor, Tabs
   use-inventory.ts      inventory load + optimistic save
+  use-calendar.ts       calendar load + optimistic save
+  use-family.ts         household load + optimistic save
+  use-region.ts         applies locale/timezone/currency in the browser
+  use-household.ts      your name, the household's, and who is in it
   use-api.ts            read-only JSON fetch with reload
   item-history.tsx      one item’s purchase history, in a native <dialog>
   agentation.tsx        dev-only annotation toolbar
@@ -110,9 +122,12 @@ lib/
   units.ts              unit table, unit price, cheapest
   bill.ts               bill shape, validation, price comparison
   analytics.ts          spend, projection, deviation, inflation, index, per-item report
-  money.ts              rupee and percentage formatting
+  money.ts              money and percentage formatting, in the region's currency
+  region.ts             locale, timezone and currency, and what "today" means
   env-file.ts           patching .env in place, for the settings page
-  *.test.ts             41 tests over the lib modules
+  calendar.ts           the shared calendar: types, validation, month-grid and duration maths
+  family.ts             who lives here: names, roles, validation
+  *.test.ts             69 tests over the lib modules
 server/
   index.ts              the Express routes, transport only
   db.ts                 reads DB_SELECT and forwards to one driver
@@ -125,7 +140,7 @@ scripts/
   doctor.mjs            the requirement checks behind `mise run doctor`
   migrate.mjs           applies supabase/schema.sql
   dev.mjs               runs Next and the API together
-  seed.mjs              starter inventory + eight months of demo bills
+  seed.mjs              starter inventory + demo bills, subscriptions, calendar
   starter-inventory.mjs the 6 categories / 28 items a fresh database starts with
 mise.toml               toolchain pins and the tasks
 .env.example            configuration template, Supabase block included
@@ -138,7 +153,7 @@ only copy.
 
 ## The API
 
-Twelve routes. All maths and validation lives in `lib/` as pure functions; `server/index.ts` is transport only.
+Sixteen routes. All maths and validation lives in `lib/` as pure functions; `server/index.ts` is transport only.
 
 **`GET /api/inventory`** — `{ categories: [{ id, name, items }] }`, ordered by the stored `order` field.
 
@@ -155,11 +170,15 @@ An import is the same POST with an **array** body, up to 100 bills. It is all-or
 
 **`GET` / `PUT /api/subscriptions`** — the subscriptions document, validated by `normalizeSubscriptions`.
 
+**`GET` / `PUT /api/calendar`** — the family calendar, validated by `normalizeCalendar`: a title, a real `yyyy-mm-dd` date (`2026-02-30` is refused), 24-hour `HH:MM` times or empty for all day, an end time that has to be after the start and on the same day, a `http(s)` link (a bare host gets `https://` put in front of it; `javascript:` is refused), at most 20 people, an RSVP per person, a booking status of empty / `needed` / `booked`, the name of whoever added it, notes, and at most 50 comments. A title may be blank, because the dialog saves on every keystroke and clearing the field to retype it must not be rejected — the same rule as item names. Written whole, like subscriptions, and stored back in calendar order. A date here is a day and a time is a wall clock: neither carries a timezone, because movie night is at eight o'clock wherever the reader is.
+
 **`GET /api/mcp`** — what the MCP server offers (tools with their JSON Schemas), the servers listed in `.mcp.json` with their query strings stripped, and the three inference engines with whether each has a key.
 
 **`POST /api/mcp`** — MCP itself, JSON-RPC: `initialize`, `ping`, `tools/list`, `tools/call`, singly or batched. Hand-rolled rather than `@modelcontextprotocol/sdk`: tools only, one JSON response per request, no SSE, no sessions, no resources or prompts. `server/mcp.ts` carries the ceiling and the upgrade path in a `ponytail:` comment, and `TOOLS` is already the shape the SDK wants.
 
 **`POST /api/chat`** — `{ provider?, messages }`. Runs one turn against the configured engine with the same tool registry attached, executes whatever tools it asks for, and loops up to five rounds before giving up. Answers with only the messages the turn added, tool calls and tool results included, so the page can show the reasoning. Ollama, NVIDIA NIM and OpenRouter all speak the OpenAI chat-completions API, so there is one code path and an engine is a base URL, a key and a model name. Not streamed. An unreachable, unkeyed or wrong-model engine is a `502` naming which — it is the user's to fix, not a server fault.
+
+**`GET` / `PUT /api/family`** — who lives here, validated by `normalizeFamily`. A name may be blank while it is being typed, but two people may not share one: the calendar keys invitations and RSVPs by name, so a duplicate would make two people one.
 
 **`GET` / `PUT /api/settings`** — the `.env`-backed settings. Secrets go out as `set: true` and never as values; an empty secret on a write means "keep it". A write patches `.env` (comments and key order survive, see `lib/env-file.ts`) and sets `process.env`, then answers with which keys need a restart: `DB_SELECT` and the engine settings are live, but the Mongo URI and the Postgres URL are read once at module load by the drivers, so the page says so rather than appearing to work. Unknown keys and invalid choices are a `400`.
 
@@ -282,6 +301,26 @@ a 24px transparent hit area so a small dot is still catchable.
 
 **Phase 15 — chart colours follow the page.** Light-theme charts were a blue / orange / mint / yellow / pink set, three of which sat under 3:1 on white and none of which were the emerald or amber used everywhere else. The series is now those two tokens plus slate, clay and khaki. The palette also follows the theme toggle (`data-theme`), not only the operating system.
 
+**Phase 17 — the shared calendar.** `/calendar`, an `events` collection/table, `GET`/`PUT /api/calendar`, and two more MCP tools (`list_events`, `add_event`) so the chat window can answer "when is the next movie night". A date is stored as `yyyy-mm-dd` and a time as `HH:MM`, both without a timezone, so nothing is ever converted; the month grid walks UTC midnights purely as a calendar with no clocks in it, which keeps a day exactly 86400000ms across a DST change. **No recurrence** — that is RRULE, timezones, DST and exceptions to a series, and `lib/calendar.ts` carries the reason and the upgrade path in a `ponytail:` comment. In Postgres the columns are `on_date` and `at_time` because `date` and `time` are type names, and `at_time` is text because `''` means all day, which is not a time. `who` is free text: with no sign-in there is nothing to take an author from, so the field is a label, not an identity.
+
+Writing the local-date helper turned up a real bug next door. `today()` in `lib/bill.ts` was `new Date().toISOString().slice(0, 10)`, which is **UTC** — in IST that is still yesterday until 05:30, so between midnight and half five a bill dated today was rejected as "dated in the future". `pnpm seed --clear` hit it first (it builds its dates from local parts, and the last demo bill is today's), but the bill form had the same hole for anyone entering a receipt late at night. `today` is now `todayISO` from `lib/calendar.ts` — one implementation for both — and a test pins it with a local-parts date that a `toISOString()` version fails anywhere but UTC. `seed.mjs` also seeds six subscriptions and nine calendar entries either side of today, so `/subscriptions`, `/calendar` and `/control` are no longer empty after a fresh seed.
+
+**Phase 18 — the calendar entry grows up.** A title and a time was not enough to plan a movie night with. An entry now carries the activity it blocks the day for, an end time (typed, or picked as a duration — the duration is only a way of writing the end time, and only the end time is stored), a venue, a link, the people invited, an RSVP from each of them, a booking status with the name it is reserved under, notes and a comment thread. One flat shape rather than a type per activity: a movie's theatre and ticket link are a dinner's restaurant and booking link, so `kind` only changes what the dialog calls `venue` and `link` and never what is stored. A seat number would be the point to reconsider that. The detail lives in a native `<dialog>` (`app/calendar/event-dialog.tsx`), reached from the day panel or from "Coming up", so the month grid stays a month grid. Three things fall out of having no sign-in: `people` are names rather than accounts (picked from `HOUSEHOLD_PEOPLE` in settings, or typed — both work), an RSVP is keyed by that name, and a comment is signed with `USER_NAME`, which makes it a signature and not an identity. Links are coerced to `https://` when the scheme is missing and refused unless they are `http(s)` — a `javascript:` href in shared, editable data is an attack on whoever opens it. Overnight events are refused rather than wrapped: one entry is one date, and 23:00–01:00 would mean "minus 22 hours" everywhere a duration is worked out.
+
+Two things came back from using it. The first was a real bug: the dialog saves on every keystroke and `normalizeCalendar` demanded a title, so clearing the title to retype it was rejected and the field appeared frozen — `normalizeInventory` had already solved that for item names, and the calendar now follows it. The second was the shape of the day panel: an add form sitting permanently under the list reads as part of the day, so it went behind an **Add** button, and the empty day says what to press. `createdBy` arrived at the same time: the author gets the fields, everyone else gets the same detail as text with the RSVP buttons and the comment box still live. It is a courtesy and not a permission — `canEdit` compares two strings from settings, and `PUT /api/calendar` still takes an edit from anybody. Authentication is what turns it into a rule.
+
+**Phase 21 — region, and a model that had been retired.** Three things in one go, all of them things that only show up from using the app.
+
+The chat started answering `NVIDIA NIM (Nemotron) refused the request: Gone`. 410 Gone from `integrate.api.nvidia.com` means the model has left the catalogue, and the default here — `nvidia/llama-3.3-nemotron-super-49b-v1.5` — had. `GET /v1/models` with the key lists what an account can actually call; the successor is `nvidia/nemotron-3-super-120b-a12b`, confirmed to emit `tool_calls` before it was made the default. The error message was its own bug: `complete()` parsed the body as JSON and fell back to `response.statusText`, so a non-JSON error body became the single word "Gone". It now reads the body as text first and reports the status, the model and whatever the provider actually said.
+
+**Region, timezone and currency** are settings now (`lib/region.ts`, a **Region** tab). `en-IN` and `₹` were hardcoded in `money.ts` across 46 call sites, so the locale and currency live in one module that the formatters read and `setRegion` fills — the call sites keep their signatures. Lakhs stay lakhs for rupees and become millions for everything else. Timezone feeds `todayISO()`, which means MCP's idea of "today" is the household's and not the server's. Values are validated on save against Intl itself, including the trap that `new Intl.DateTimeFormat("sdfsdf")` does not throw — a well-formed but unknown tag silently falls back, which on screen looks like the setting did nothing, so `supportedLocalesOf` has to be asked as well. The browser applier is a key on `PageMotion` rather than a context: it repaints once, only when the fetched region differs from the defaults, and 46 call sites did not have to become hooks. All three are dropdowns, filled from `Intl.supportedValuesOf` — 418 timezones grouped by continent, 162 currencies with their names — and built in the browser rather than sent by the API, because that is 20KB on a route the sidebar fetches on every page. Whatever is already configured is always offered back, so an unusual tag typed straight into `.env` does not vanish on the next save.
+
+**The chat renders Markdown.** The models were already answering in it and the page was showing the asterisks.
+
+**Phase 20 — /mcp is two tabs.** Asking the data a question and wiring another client up to the same tools are two jobs, and nobody wants both at once, so **Chat** and **Tools & clients** are tabs. The chat gets the whole pane and is taller for it. The tab strip itself moved into `app/ui.tsx` as `Tabs` the moment a second page wanted one — `/settings` had it first, copied is where it would have stayed.
+
+**Phase 19 — the household is data, not configuration.** Who lives here started as `HOUSEHOLD_PEOPLE`, a comma-separated line in `.env`, which was wrong twice over: the calendar points at these people by name, and `.env` is for things the server needs before it can talk to anything. It is now a `family` collection (Mongo) / table (Postgres) behind `GET`/`PUT /api/family`, with `list_family` on the MCP side, and the setting is gone. A person is a name and a role and nothing else — no contact details, no birthdays, because nothing reads them and a field nothing reads goes stale; the obvious next one is a colour for the calendar chips, when the grid actually uses it. Two people may not share a name, since an RSVP is keyed by name and a duplicate would make two people one. `cleanPerson` moved from `calendar.ts` to `family.ts` and the calendar imports it, which is the right direction: events reference people. **Settings became tabs** at the same time — You, Family, Database, Inference, Appearance — because the page had grown past the point where one scroll of cards was readable, and because the family list does not belong under a "Save to .env" button. Two of the five tabs save themselves (family writes per keystroke, the theme never leaves the browser), so the save bar only appears on the three that are `.env`, and a dot marks a tab holding an unsaved change.
+
 **Phase 16 — motion, home control, and a phone layout.** GSAP is loaded with a dynamic `import()` from `app/page-motion.tsx`, one wrapper around the page pane, so it stays out of the server bundle. A navigation leaves with `power2.in` (opacity and a few pixels of translate, 200ms) and enters with `power2.out` (280ms). `prefers-reduced-motion` skips both and the pane stays visible. Tweens are killed on cleanup; a second navigation while a leave is already underway swaps to the newest page instead of chaining fades. `app/loading.tsx` is the route skeleton. **Home control** (`/control`) lists low stock, recent bills, and subscriptions from the existing hooks, and whether the data API and the selected database answered. It links to the page that can change each of those, and it says NAS shares, volumes, and power switches are not connected. On a narrow screen the sidebar is a top bar with a menu; wide tables scroll inside their cards.
 
 ## Where the numbers come from
@@ -307,11 +346,13 @@ empty database. Then wrote a single canary category and two canary bills
 inflation (77 → 99 per jar), a one-slice pie at 100%, and August gap-filled as
 ₹0 between the two bills. Probe database dropped afterwards.
 
-**The one nuance:** the demo bills `pnpm seed` writes are invented. They are
-real database rows and everything on screen is genuinely derived from them, but
-they are not real purchases — `mise run seed -- --clear` and your own bills
-replace them. The starter inventory is likewise seed data in `scripts/`, read
-once at seed time and never again.
+**The one nuance:** what `pnpm seed` writes is invented — the bills, the six
+subscriptions and the nine calendar entries alike. They are real database rows
+and everything on screen is genuinely derived from them, but they are not real
+purchases or real plans; every bill is noted "demo data" and so is every
+calendar entry, and `mise run seed -- --clear` plus your own entries replace
+them. The starter inventory is likewise seed data in `scripts/`, read once at
+seed time and never again.
 
 ## Known issues
 
@@ -336,7 +377,7 @@ mise run setup      # mise install (Node 24, pnpm 12.14) + pnpm install + create
 #                     set DB_SELECT in .env
 mise run doctor     # toolchain, dependencies, config, selected database, ports
 mise run migrate    # Postgres schema, or Mongo indexes (safe to re-run)
-mise run seed       # starter inventory + demo bills (-- --clear to replace)
+mise run seed       # inventory, demo bills, subscriptions and calendar (-- --clear)
 mise run develop    # pages on :3000, data API on :4000
 mise run check      # the test suite
 mise run build      # production build of the pages
@@ -355,8 +396,8 @@ pnpm run doctor # same checks (`pnpm doctor` is pnpm's own command)
 pnpm dev        # same two processes
 pnpm dev:web    # just Next
 pnpm api        # just the data API (node --watch)
-pnpm check      # 31 tests
-pnpm seed       # starter inventory + demo bills (--clear to replace)
+pnpm check      # 69 tests
+pnpm seed       # inventory, demo bills, subscriptions and calendar (--clear)
 pnpm build      # production build
 ```
 

@@ -5,6 +5,7 @@
  */
 
 import { itemKey } from "./analytics.ts";
+import { todayISO } from "./calendar.ts";
 import { unitPrice } from "./units.ts";
 
 export type LineInput = {
@@ -55,7 +56,13 @@ const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 export const isDate = (v: unknown) =>
   typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v));
 
-export const today = () => new Date().toISOString().slice(0, 10);
+/**
+ * Today where the person is, not in UTC. `toISOString()` is UTC, which in IST
+ * is still yesterday until 05:30 — so a bill entered after midnight was being
+ * rejected as dated in the future, and the seed script hit the same wall.
+ * One implementation, in lib/calendar.ts, because both files need this answer.
+ */
+export const today = todayISO;
 
 const round = (n: number) => Math.round(n * 100) / 100;
 

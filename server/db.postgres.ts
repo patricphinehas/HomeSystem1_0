@@ -9,6 +9,9 @@ import { NotConfigured } from "./db-select.ts";
 import type { Bill, BillLine, StoredBill } from "../lib/bill.ts";
 import type { Category, Inventory, Item } from "../lib/inventory.ts";
 import type { Subscription, SubscriptionsDoc } from "../lib/subscriptions.ts";
+import { fromStored } from "../lib/calendar.ts";
+import type { CalendarDoc } from "../lib/calendar.ts";
+import type { FamilyDoc } from "../lib/family.ts";
 import type { Line } from "../lib/analytics.ts";
 
 const CONNECTION = process.env.DATABASE_URL ?? "";
@@ -218,6 +221,121 @@ export async function writeSubscriptions(doc: SubscriptionsDoc): Promise<void> {
   });
 }
 
+/* ---------------- family ---------------- */
+
+export async function readFamily(): Promise<FamilyDoc> {
+  const rows = await sql()<{ id: string; name: string; role: string }[]>`
+    select id, name, role from family order by position, id
+  `;
+  return { people: rows };
+}
+
+export async function writeFamily(doc: FamilyDoc): Promise<void> {
+  await sql().begin(async (tx) => {
+    const ids = doc.people.map((p) => p.id);
+    for (const [position, person] of doc.people.entries()) {
+      await tx`
+        insert into family ${tx({ id: person.id, name: person.name, role: person.role, position })}
+        on conflict (id) do update set name = excluded.name, role = excluded.role, position = excluded.position
+      `;
+    }
+    await tx`delete from family ${ids.length ? tx`where id <> all(${ids})` : tx``}`;
+  });
+}
+
+/* ---------------- calendar ---------------- */
+
+/**
+ * `date` and `time` are both type names in Postgres, so the columns are
+ * `on_date` and `at_time`. `at_time` and `end_time` are text, not `time`,
+ * because an empty string means all day and that is not a time. `rsvp` and
+ * `comments` are jsonb: they are read and written whole with the event and
+ * never queried into, so a table each would buy nothing.
+ */
+type EventRow = {
+  id: string;
+  on_date: string;
+  at_time: string;
+  end_time: string;
+  kind: string;
+  title: string;
+  venue: string;
+  link: string;
+  people: string[];
+  rsvp: Record<string, string>;
+  reservation: string;
+  reserved_under: string;
+  created_by: string;
+  notes: string;
+  comments: unknown[];
+};
+
+export async function readCalendar(): Promise<CalendarDoc> {
+  const rows = await sql()<EventRow[]>`
+    select id, to_char(on_date, 'YYYY-MM-DD') as on_date, at_time, end_time, kind, title,
+           venue, link, people, rsvp, reservation, reserved_under, created_by, notes, comments
+    from events order by on_date, at_time, title
+  `;
+  // Through `fromStored`, so a row written before a column existed still
+  // arrives with every key, exactly as the Mongo driver does.
+  return {
+    events: rows.map((r) =>
+      fromStored({
+        ...r,
+        date: r.on_date,
+        time: r.at_time,
+        endTime: r.end_time,
+        reservedUnder: r.reserved_under,
+        createdBy: r.created_by,
+      }),
+    ),
+  };
+}
+
+export async function writeCalendar(doc: CalendarDoc): Promise<void> {
+  await sql().begin(async (tx) => {
+    const ids = doc.events.map((e) => e.id);
+    for (const event of doc.events) {
+      const row = {
+        id: event.id,
+        on_date: event.date,
+        at_time: event.time,
+        end_time: event.endTime,
+        kind: event.kind,
+        title: event.title,
+        venue: event.venue,
+        link: event.link,
+        people: event.people,
+        rsvp: tx.json(event.rsvp),
+        reservation: event.reservation,
+        reserved_under: event.reservedUnder,
+        created_by: event.createdBy,
+        notes: event.notes,
+        comments: tx.json(event.comments),
+      };
+      await tx`
+        insert into events ${tx(row)}
+        on conflict (id) do update set
+          on_date = excluded.on_date,
+          at_time = excluded.at_time,
+          end_time = excluded.end_time,
+          kind = excluded.kind,
+          title = excluded.title,
+          venue = excluded.venue,
+          link = excluded.link,
+          people = excluded.people,
+          rsvp = excluded.rsvp,
+          reservation = excluded.reservation,
+          reserved_under = excluded.reserved_under,
+          created_by = excluded.created_by,
+          notes = excluded.notes,
+          comments = excluded.comments
+      `;
+    }
+    await tx`delete from events ${ids.length ? tx`where id <> all(${ids})` : tx``}`;
+  });
+}
+
 /* ---------------- bills ---------------- */
 
 export async function insertBills(bills: Bill[]): Promise<string[]> {
@@ -340,7 +458,7 @@ export async function readBills(limit: number): Promise<StoredBill[]> {
 /** Empties every table. Used only by `seed --clear`. */
 export async function clear(): Promise<void> {
   // bill_items and items go with their parents through the cascade.
-  await sql()`truncate bills, categories, subscriptions cascade`;
+  await sql()`truncate bills, categories, subscriptions, events, family cascade`;
 }
 
 export async function counts(): Promise<{ categories: number; items: number; bills: number }> {

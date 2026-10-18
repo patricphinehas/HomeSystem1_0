@@ -1,17 +1,34 @@
 /**
- * Seeds the database: the starter inventory, and demo bills so the analytics
- * page has something to show before you have entered months of real shopping.
+ * Seeds the database so every page has something to show before you have
+ * entered months of real shopping: the starter inventory, demo bills behind the
+ * analytics, a few subscriptions, and a calendar with things either side of
+ * today.
  *
  *   node scripts/seed.mjs          seed an empty database (refuses a full one)
  *   node scripts/seed.mjs --clear  wipe the tables first
  *
- * The inventory is real starter data. The prices on the demo bills are
- * invented, and every demo bill is noted as such.
+ * The inventory is real starter data. Everything else is invented and says so:
+ * each bill is noted "demo data" and so is every calendar entry, so a seeded
+ * database is never mistaken for a used one. Subscriptions, the calendar and
+ * the inventory are each written whole, replacing whatever was there.
  */
 
 import { normalizeBill } from "../lib/bill.ts";
+import { normalizeCalendar } from "../lib/calendar.ts";
+import { normalizeFamily } from "../lib/family.ts";
 import { normalizeInventory } from "../lib/inventory.ts";
-import { applySchema, clear, close, counts, insertBills, writeInventory } from "../server/db.ts";
+import { normalizeSubscriptions } from "../lib/subscriptions.ts";
+import {
+  applySchema,
+  clear,
+  close,
+  counts,
+  insertBills,
+  writeCalendar,
+  writeFamily,
+  writeInventory,
+  writeSubscriptions,
+} from "../server/db.ts";
 import { STARTER_CATEGORIES } from "./starter-inventory.mjs";
 
 const MONTHS = 8; // ending with the current month
@@ -59,6 +76,79 @@ const PRICES = {
   "Mosquito repellent refill": [85, 0.06, 0.4],
 };
 
+/** Demo subscriptions: one of each kind the page can show, shared and not. */
+const SUBSCRIPTIONS = [
+  { id: "sub-stream-1", name: "Netflix", type: "streaming", tag: "entertainment", holder: "Dad", shareable: true, shareCount: 4 },
+  { id: "sub-stream-2", name: "Spotify Family", type: "streaming", tag: "entertainment", holder: "Anu", shareable: true, shareCount: 6 },
+  { id: "sub-cloud-1", name: "Google One 200GB", type: "cloud", tag: "home", holder: "Dad", shareable: true, shareCount: 5 },
+  { id: "sub-news-1", name: "The Hindu", type: "news", tag: "home", holder: "Mum", shareable: false, shareCount: null },
+  { id: "sub-utility-1", name: "Broadband", type: "utility", tag: "home", holder: "Dad", shareable: false, shareCount: null },
+  { id: "sub-software-1", name: "Password manager", type: "software", tag: "home", holder: "Ravi", shareable: true, shareCount: 5 },
+];
+
+/** The household the demo data belongs to, seeded into the family collection. */
+const PEOPLE = [
+  { id: "person-1", name: "Dad", role: "parent" },
+  { id: "person-2", name: "Mum", role: "parent" },
+  { id: "person-3", name: "Anu", role: "child" },
+  { id: "person-4", name: "Ravi", role: "child" },
+];
+
+/**
+ * Demo calendar. Things sit either side of today and one is in next month, so
+ * the grid, "Coming up" and paging forward all have something in them straight
+ * after a seed — and between them they use every field an entry has.
+ */
+const EVENTS = [
+  {
+    at: [-24, "10:30", "11:15"],
+    kind: "appointment",
+    title: "Dentist",
+    venue: "Smile Dental, MG Road",
+    people: ["Anu"],
+    rsvp: { Anu: "yes" },
+    createdBy: "Mum",
+  },
+  {
+    at: [-10, "19:30", "22:00"],
+    kind: "movie",
+    title: "Film night — Interstellar",
+    venue: "PVR Forum",
+    link: "https://in.bookmyshow.com/",
+    people: ["Dad", "Mum", "Anu", "Ravi"],
+    rsvp: { Dad: "yes", Mum: "yes", Anu: "yes", Ravi: "no" },
+    reservation: "booked",
+    reservedUnder: "Dad",
+    createdBy: "Dad",
+    comments: [["Dad", "Row H, four seats."], ["Anu", "Can we eat before? The interval queue is always mad."]],
+  },
+  { at: [-3, "", ""], kind: "chore", title: "Gas cylinder refill", people: ["Ravi"], createdBy: "Mum" },
+  { at: [0, "", ""], kind: "chore", title: "Bin day", people: ["Ravi"], rsvp: { Ravi: "yes" }, createdBy: "Mum" },
+  { at: [1, "18:00", "19:00"], kind: "chore", title: "Grocery run", venue: "DMart", people: ["Mum", "Anu"], createdBy: "Mum" },
+  {
+    at: [3, "20:00", "23:00"],
+    kind: "movie",
+    title: "Movie night",
+    venue: "Living room",
+    people: ["Dad", "Mum", "Anu", "Ravi"],
+    rsvp: { Dad: "yes", Mum: "maybe", Anu: "yes" },
+    createdBy: "Anu",
+    comments: [["Mum", "Somebody pick a film this time, not three trailers and bed."]],
+  },
+  {
+    at: [9, "19:00", "22:30"],
+    kind: "dinner",
+    title: "Neighbours over for dinner",
+    venue: "Home",
+    people: ["Dad", "Mum", "Anu", "Ravi"],
+    rsvp: { Dad: "yes", Mum: "yes" },
+    reservation: "needed",
+    createdBy: "Mum",
+  },
+  { at: [16, "09:00", "11:00"], kind: "appointment", title: "Car service", venue: "Service centre", people: ["Dad"], createdBy: "Dad" },
+  { at: [27, "", ""], kind: "chore", title: "Rent due", people: ["Dad"], createdBy: "Dad" },
+];
+
 const catalogue = STARTER_CATEGORIES.flatMap((c) =>
   c.items
     .filter((i) => PRICES[i.name])
@@ -81,6 +171,13 @@ if (catalogue.length === 0) {
 const now = new Date();
 const monthStart = (back) => new Date(now.getFullYear(), now.getMonth() - back, 1);
 const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+/**
+ * A date this many days from today, in local time. Local throughout, because
+ * that is what `today()` compares a bill against and what the calendar stores;
+ * a UTC day here is yesterday for half of IST's day and the bills get rejected.
+ */
+const dayFrom = (days) => iso(new Date(now.getFullYear(), now.getMonth(), now.getDate() + days));
 
 /** Buy weight-priced staples in grams sometimes, so unit conversion gets used. */
 const asBought = (item, unitPriceNow) => {
@@ -160,5 +257,44 @@ console.log(
     `${seededBills[0].date} to ${seededBills[seededBills.length - 1].date}, ` +
     `total ₹${Math.round(total).toLocaleString("en-IN")}`,
 );
+
+// Same rule as the bills: through the app's own validators, so the seed can
+// never write a shape the app would refuse.
+const household = normalizeFamily({ people: PEOPLE });
+if ("error" in household) throw new Error(`demo household is invalid: ${household.error}`);
+await writeFamily(household.doc);
+console.log(`seeded ${household.doc.people.length} people: ${household.doc.people.map((p) => p.name).join(", ")}`);
+
+const subs = normalizeSubscriptions({ subscriptions: SUBSCRIPTIONS });
+if ("error" in subs) throw new Error(`demo subscriptions are invalid: ${subs.error}`);
+await writeSubscriptions(subs.doc);
+console.log(`seeded ${subs.doc.subscriptions.length} subscriptions`);
+
+const calendar = normalizeCalendar({
+  events: EVENTS.map((event, i) => {
+    const [days, time, endTime] = event.at;
+    return {
+      ...event,
+      at: undefined,
+      id: `demo-event-${i + 1}`,
+      date: dayFrom(days),
+      time,
+      endTime,
+      notes: "demo data",
+      // Comments are [who, what]; the timestamps are spread over the days
+      // before the event so the thread reads in order.
+      comments: (event.comments ?? []).map(([by, text], c) => ({
+        id: `demo-comment-${i + 1}-${c + 1}`,
+        by,
+        at: new Date(Date.parse(`${dayFrom(days - 2)}T10:00:00`) + c * 3600_000).toISOString(),
+        text,
+      })),
+    };
+  }),
+});
+if ("error" in calendar) throw new Error(`demo calendar is invalid: ${calendar.error}`);
+await writeCalendar(calendar.doc);
+const dates = calendar.doc.events.map((e) => e.date);
+console.log(`seeded ${calendar.doc.events.length} calendar events, ${dates[0]} to ${dates[dates.length - 1]}`);
 
 await close();

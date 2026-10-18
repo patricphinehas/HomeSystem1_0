@@ -11,7 +11,7 @@ is reachable, and an empty one means an empty app until `pnpm seed` runs.
 mise run setup      # toolchain + dependencies, creates .env if missing
 mise run doctor     # check Node, pnpm, packages, the selected database, ports
 mise run migrate    # Postgres schema, or Mongo indexes
-mise run seed       # starter inventory + demo bills (-- --clear to replace)
+mise run seed       # inventory, demo bills, subscriptions and calendar (-- --clear)
 mise run develop    # pages on :3000, data API on :4000
 ```
 
@@ -23,9 +23,10 @@ Without mise (`winget install jdx.mise`), the same things are `pnpm install`,
 - `/inventory` — a tab per category; an item joins **Buy next** when its count reaches its minimum. Tag items here, or open a row’s chart button for its full purchase history.
 - `/upload` — enter a bill; each line is priced per kg / litre / piece and compared with what it used to cost.
 - `/analytics` — spend, projection, deviations and price inflation.
+- `/calendar` — the shared family calendar: pick a day, add what is planned, then open it for the activity, venue, who is coming and their RSVPs, the booking, tickets and the comments.
 - `/mcp` — the household data as MCP tools any client can call, plus a chat window that calls them for you (Ollama, NVIDIA NIM or OpenRouter).
 - `/manual` — the user manual, page by page.
-- `/settings` — user, database, inference engine and theme. Writes `.env`.
+- `/settings` — tabs for you, the family, the region (locale, timezone, currency), the database, the inference engine and the theme. Everything but the family list and the theme writes to `.env`.
 
 Architecture, the API, the price maths, decisions, progress and known issues:
 [`docs/README.md`](docs/README.md).

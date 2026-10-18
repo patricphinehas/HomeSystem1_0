@@ -5,7 +5,7 @@
 #
 #   mise run setup      install the toolchain and the dependencies
 #   mise run doctor      check everything the app needs is present
-#   mise run seed        load the starter inventory and demo bills
+#   mise run seed        load the starter inventory and the demo data
 #   mise run develop     run the pages and the data API together
 #
 # `mise tasks` lists them all.
@@ -37,7 +37,7 @@ description = "Prepare the database named by DB_SELECT (Postgres schema, or Mong
 run = "node --env-file-if-exists=.env scripts/migrate.mjs"
 
 [tasks.seed]
-description = "Load the starter inventory and demo bills (pass -- --clear to replace)"
+description = "Load the starter inventory, demo bills, subscriptions and calendar (pass -- --clear)"
 run = "node --env-file-if-exists=.env scripts/seed.mjs"
 
 [tasks.develop]
