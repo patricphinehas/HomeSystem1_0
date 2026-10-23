@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/patricphinehas/HomeSystem1_0/discussions
+    about: Ask questions, share ideas, or show what you built — use GitHub Discussions instead of an issue.
