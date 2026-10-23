@@ -3,13 +3,14 @@
 Household inventory, bill entry and price analytics. A Next.js app for the
 pages, an Express API for the data, and either Supabase or MongoDB behind it —
 `DB_SELECT` in `.env` chooses. Nothing is read from or written to disk at runtime.
-Last updated: 2026-10-19.
+Last updated: 2026-10-23.
 
 ## What it does
 
 - **Overview** (`/`) — four counters (categories, items, running low, out of stock) and the first six things to buy.
 - **Home control** (`/control`) — low stock, recent bills, and subscriptions, plus whether the data API and the selected database answered. The machine panel names that database target and says which home-device controls are not connected.
 - **Inventory management** (`/inventory`) — one tab per category plus a **Buy next** tab. Add, rename, re-count, tag and delete items and categories inline; every edit saves immediately. The chart button on a row opens that item’s whole purchase history: price per unit over time, how often it gets bought, when it is next due, and which shop has been cheapest.
+- **Subscriptions** (`/subscriptions`) — recurring costs with a cycle (`monthly`, `quarterly`, `yearly`, `weekly`, or `one-off`), per-row monthly figures, and page totals on one scale.
 - **Enter bill** (`/upload`) — a bill's date, shop and lines. Each line is reduced to a price per kg / litre / piece and compared with what that item has cost before.
 - **Analytics** (`/analytics`) — spend over time with a projection, where the money goes, a basket price index, per-purchase price deviations, and the biggest price moves.
 - **MCP tools** (`/mcp`) — two tabs: **Chat**, which asks the household data a question and shows every tool call it makes, and **Tools & clients**, which lists the tools with their arguments, the block to paste into an MCP client, and the servers `.mcp.json` points at.
@@ -87,28 +88,33 @@ ever talks to one origin and there is no CORS configuration anywhere.
 app/
   layout.tsx            sidebar + main shell, fonts, metadata
   sidebar.tsx           nav, active link from usePathname(); a menu on a phone
+  main-frame.tsx        app shell wrapper around the sidebar and page pane
+  page-frame.tsx        PageGrid layout shared by most routes
   page-motion.tsx       page leave/enter; GSAP imported on the client
   loading.tsx           route skeleton while the next segment streams in
   page.tsx              Overview
   control/page.tsx      home control: activity, and what the machine can report
   inventory/page.tsx    tabs, Buy next, item rows, tags, add/delete forms
+  subscriptions/page.tsx  recurring costs, cycle, monthly and yearly totals
   upload/page.tsx       bill entry, live per-unit price, recent bills
+  bill-detail.tsx       shared bill breakdown UI
+  import-map-dialog.tsx bill-import field reference dialog
   analytics/
     page.tsx            filter row, stat tiles, chart cards, price-move table
     charts.tsx          the charts; the four on the page each carry a legend and a table twin
     palette.ts          validated chart colours, light and dark
   mcp/
-    page.tsx            the tool list, the connect snippet, the servers from .mcp.json
-    chat.tsx            the chat window; engine dropdown, tool calls shown inline
+    page.tsx            Chat and Tools & clients tabs; tool list and connect snippet
+    chat.tsx            chat window; engine dropdown, tool calls shown inline
   manual/page.tsx       the user manual, prose only, no data fetching
-  mcp/page.tsx          tabs: chat, and the tools any client can call
-  settings/page.tsx     tabs: you, family, database, inference, appearance
+  settings/page.tsx     tabs: you, family, region, database, inference, appearance
   settings/family.tsx   the household list, saved as you type
   calendar/page.tsx     month grid, the day's plans, what is coming up
   calendar/event-dialog.tsx  one entry in full, in a <dialog>
   theme.tsx             system / light / dark, localStorage, no server involvement
   ui.tsx                Stepper, Skeleton, Notice, Card, TagEditor, Tabs, loaders
   use-inventory.ts      inventory load + optimistic save
+  use-subscriptions.ts  subscriptions load + optimistic save
   use-calendar.ts       calendar load + optimistic save
   use-family.ts         household load + optimistic save
   use-region.ts         applies locale/timezone/currency in the browser
@@ -119,6 +125,7 @@ app/
   globals.css           colour tokens, light + dark, focus ring
 lib/
   inventory.ts          types, isLow, lowStock, totals, tags, validation
+  match-inventory.ts    bill line ↔ inventory item matching
   units.ts              unit table, unit price, cheapest
   bill.ts               bill shape, validation, price comparison
   analytics.ts          spend, projection, deviation, inflation, index, per-item report
@@ -131,6 +138,7 @@ lib/
   *.test.ts             75 tests over the lib modules
 server/
   index.ts              the Express routes, transport only
+  db-select.ts          parses and validates DB_SELECT
   db.ts                 reads DB_SELECT and forwards to one driver
   db.postgres.ts        Supabase queries
   db.mongo.ts           MongoDB queries
@@ -139,7 +147,7 @@ server/
   settings.ts           the .env-backed settings routes
 scripts/
   doctor.mjs            the requirement checks behind `mise run doctor`
-  migrate.mjs           applies supabase/schema.sql
+  migrate.mjs           Postgres schema or Mongo indexes
   dev.mjs               runs Next and the API together
   seed.mjs              starter inventory + demo bills, subscriptions, calendar
   starter-inventory.mjs the 6 categories / 28 items a fresh database starts with
@@ -288,7 +296,7 @@ a 24px transparent hit area so a small dot is still catchable.
 
 **Phase 8 — per-item history.** The price series was always stored; now you can look at one item's. A chart-line button on every inventory row opens a native `<dialog>` (Escape, focus trapping and the backdrop come free) showing: how many times it has been bought and since when, when it was last bought, the average gap between purchases and the next due date, total spent and total quantity, a line of the price per base unit for every purchase with the average as a reference line, a table of every purchase (date, shop, quantity, paid, per-unit, with the best price marked), and a per-shop ranking by average price. `itemReport()` in `lib/analytics.ts` computes it, matching purchases on inventory id *and* on name so free-typed bills still line up. The analytics payload is fetched lazily — only once a history is first opened — and the drawer is a `next/dynamic` import so the chart library stays out of the inventory page's initial load.
 
-**Phase 9 — mise tasks.** `mise.toml` pins Node 24 and pnpm 12.14.0, holds the Mongo and port settings in `[env]`, and defines `setup`, `doctor`, `seed`, `develop`, `check` and `build`. `scripts/doctor.mjs` is the interesting one: it checks the Node version against what type stripping needs, pnpm against the `packageManager` pin, the key packages, Mongo's reachability and version, whether the database has been seeded, and whether the two ports are free — exiting 1 only for things that actually block a run. Two bugs in the first cut of it, both found by running it: the port probe bound `127.0.0.1`, which on Windows succeeds even when a server already holds `0.0.0.0`, so it called busy ports free; and passing argv alongside `shell: true` trips a Node deprecation warning.
+**Phase 9 — mise tasks.** `mise.toml` pins Node 24 and pnpm 12.14.0 and defines `setup`, `doctor`, `migrate`, `seed`, `develop`, `check` and `build`. Configuration stays in `.env` only (not duplicated in `mise.toml`). `scripts/doctor.mjs` is the interesting one: it checks the Node version against what type stripping needs, pnpm against the `packageManager` pin, the key packages, whether the database named by `DB_SELECT` answers, whether it has been seeded, and whether the two ports are free — exiting 1 only for things that actually block a run. Two bugs in the first cut of it, both found by running it: the port probe bound `127.0.0.1`, which on Windows succeeds even when a server already holds `0.0.0.0`, so it called busy ports free; and passing argv alongside `shell: true` trips a Node deprecation warning.
 
 **Phase 10 — confirm before deleting a category.** One click used to delete a category and every item in it, with no undo and no history to recover from (which is exactly how a category got lost). The button is now two-step: the first click turns it into “Delete <name> and its N items?” with Delete and Cancel, switching tabs abandons it, and nothing is written until Delete is pressed. Inline rather than a `confirm()` dialog or a modal — it names what will be lost, in place, without blocking the page.
 
@@ -296,29 +304,27 @@ a 24px transparent hit area so a small dot is still catchable.
 
 **Seed data.** Groceries, Cleaning, Bath & utilities, Games, Stationery, Wellness & health — 28 items with rooms, units and minimums.
 
-**Phase 13 — `DB_SELECT`.** The API can talk to either database. `.env` sets `DB_SELECT` to `supabase` or `mongodb`; `server/db.ts` forwards every call to `db.postgres.ts` or `db.mongo.ts`. Mongo stores one document per category (items embedded, `order` for tab order) and one document per bill, which is the shape the local `homesystem` database already had. Subscriptions are a third collection. This machine's `.env` selects MongoDB.
+**Phase 12 — Supabase.** Postgres support landed first as the hosted option. Four tables in `supabase/schema.sql` (`categories`, `items`, `bills`, `bill_items`), queries in `server/db.postgres.ts`, `PUT /api/inventory` as one transaction with explicit `position` columns, row-level security enabled with no policies, and `bill_items.item_id` left without a foreign key so deleting an item keeps its purchase history. Migrate, seed and doctor gained a Postgres path. The pricing logic in `lib/` was not changed. The direct `db.*` host is IPv6-only and does not resolve from this machine, so `.env` uses the transaction pooler in ap-northeast-2 (port 6543). Schema applied there on 2026-10-18; the tables were empty afterwards.
 
-**Phase 12 — Supabase.** MongoDB replaced by Postgres. Four tables in `supabase/schema.sql` (`categories`, `items`, `bills`, `bill_items`), every query in `server/db.ts` on the `postgres` driver, `PUT /api/inventory` as one transaction with explicit `position` columns, row-level security enabled with no policies, and `bill_items.item_id` left without a foreign key so deleting an item keeps its purchase history. Migrate, seed and doctor moved with it; the `mongodb` dependency is gone. The pricing logic in `lib/` was not changed. The direct `db.*` host is IPv6-only and does not resolve from this machine, so `.env` uses the transaction pooler in ap-northeast-2 (port 6543). Schema applied there on 2026-10-18; the tables were empty afterwards.
+**Phase 13 — `DB_SELECT`.** The API can talk to either database. `.env` sets `DB_SELECT` to `supabase` or `mongodb`; `server/db.ts` forwards every call to `db.postgres.ts` or `db.mongo.ts`. Mongo stores one document per category (items embedded, `order` for tab order) and one document per bill. Subscriptions, calendar events, family, and chat logs each have their own collection or table on both drivers.
 
 **Phase 14 — compact page matrix.** Every page uses the same shell: the main pane is full width with compact padding, and the content is a two-column grid (`PageGrid` in `app/page-frame.tsx`). Headers, filters, add forms and empty messages sit inside cells, so a page with no rows still shows its controls. Overview, inventory, bills, subscriptions, analytics, settings, the manual and MCP all follow it. The sidebar user block stays pinned to the bottom.
 
 **Phase 15 — chart colours follow the page.** Light-theme charts were a blue / orange / mint / yellow / pink set, three of which sat under 3:1 on white and none of which were the emerald or amber used everywhere else. The series is now those two tokens plus slate, clay and khaki. The palette also follows the theme toggle (`data-theme`), not only the operating system.
 
+**Phase 16 — motion, home control, and a phone layout.** GSAP is loaded with a dynamic `import()` from `app/page-motion.tsx`, one wrapper around the page pane, so it stays out of the server bundle. A navigation leaves with `power2.in` (opacity and a few pixels of translate, 200ms) and enters with `power2.out` (280ms). `prefers-reduced-motion` skips both and the pane stays visible. Tweens are killed on cleanup; a second navigation while a leave is already underway swaps to the newest page instead of chaining fades. `app/loading.tsx` is the route skeleton. **Home control** (`/control`) lists low stock, recent bills, and subscriptions from the existing hooks, and whether the data API and the selected database answered. It links to the page that can change each of those, and it says NAS shares, volumes, and power switches are not connected. On a narrow screen the sidebar is a top bar with a menu; wide tables scroll inside their cards.
+
 **Phase 17 — the shared calendar.** `/calendar`, an `events` collection/table, `GET`/`PUT /api/calendar`, and two more MCP tools (`list_events`, `add_event`) so the chat window can answer "when is the next movie night". A date is stored as `yyyy-mm-dd` and a time as `HH:MM`, both without a timezone, so nothing is ever converted; the month grid walks UTC midnights purely as a calendar with no clocks in it, which keeps a day exactly 86400000ms across a DST change. **No recurrence** — that is RRULE, timezones, DST and exceptions to a series, and `lib/calendar.ts` carries the reason and the upgrade path in a `ponytail:` comment. In Postgres the columns are `on_date` and `at_time` because `date` and `time` are type names, and `at_time` is text because `''` means all day, which is not a time. `who` is free text: with no sign-in there is nothing to take an author from, so the field is a label, not an identity.
 
 Writing the local-date helper turned up a real bug next door. `today()` in `lib/bill.ts` was `new Date().toISOString().slice(0, 10)`, which is **UTC** — in IST that is still yesterday until 05:30, so between midnight and half five a bill dated today was rejected as "dated in the future". `pnpm seed --clear` hit it first (it builds its dates from local parts, and the last demo bill is today's), but the bill form had the same hole for anyone entering a receipt late at night. `today` is now `todayISO` from `lib/calendar.ts` — one implementation for both — and a test pins it with a local-parts date that a `toISOString()` version fails anywhere but UTC. `seed.mjs` also seeds six subscriptions and nine calendar entries either side of today, so `/subscriptions`, `/calendar` and `/control` are no longer empty after a fresh seed.
 
-**Phase 18 — the calendar entry grows up.** A title and a time was not enough to plan a movie night with. An entry now carries the activity it blocks the day for, an end time (typed, or picked as a duration — the duration is only a way of writing the end time, and only the end time is stored), a venue, a link, the people invited, an RSVP from each of them, a booking status with the name it is reserved under, notes and a comment thread. One flat shape rather than a type per activity: a movie's theatre and ticket link are a dinner's restaurant and booking link, so `kind` only changes what the dialog calls `venue` and `link` and never what is stored. A seat number would be the point to reconsider that. The detail lives in a native `<dialog>` (`app/calendar/event-dialog.tsx`), reached from the day panel or from "Coming up", so the month grid stays a month grid. Three things fall out of having no sign-in: `people` are names rather than accounts (picked from `HOUSEHOLD_PEOPLE` in settings, or typed — both work), an RSVP is keyed by that name, and a comment is signed with `USER_NAME`, which makes it a signature and not an identity. Links are coerced to `https://` when the scheme is missing and refused unless they are `http(s)` — a `javascript:` href in shared, editable data is an attack on whoever opens it. Overnight events are refused rather than wrapped: one entry is one date, and 23:00–01:00 would mean "minus 22 hours" everywhere a duration is worked out.
+**Phase 18 — the calendar entry grows up.** A title and a time was not enough to plan a movie night with. An entry now carries the activity it blocks the day for, an end time (typed, or picked as a duration — the duration is only a way of writing the end time, and only the end time is stored), a venue, a link, the people invited, an RSVP from each of them, a booking status with the name it is reserved under, notes and a comment thread. One flat shape rather than a type per activity: a movie's theatre and ticket link are a dinner's restaurant and booking link, so `kind` only changes what the dialog calls `venue` and `link` and never what is stored. A seat number would be the point to reconsider that. The detail lives in a native `<dialog>` (`app/calendar/event-dialog.tsx`), reached from the day panel or from "Coming up", so the month grid stays a month grid. Three things fall out of having no sign-in: `people` are names rather than accounts (picked from the family list, or typed — both work), an RSVP is keyed by that name, and a comment is signed with `USER_NAME`, which makes it a signature and not an identity. Links are coerced to `https://` when the scheme is missing and refused unless they are `http(s)` — a `javascript:` href in shared, editable data is an attack on whoever opens it. Overnight events are refused rather than wrapped: one entry is one date, and 23:00–01:00 would mean "minus 22 hours" everywhere a duration is worked out.
 
 Two things came back from using it. The first was a real bug: the dialog saves on every keystroke and `normalizeCalendar` demanded a title, so clearing the title to retype it was rejected and the field appeared frozen — `normalizeInventory` had already solved that for item names, and the calendar now follows it. The second was the shape of the day panel: an add form sitting permanently under the list reads as part of the day, so it went behind an **Add** button, and the empty day says what to press. `createdBy` arrived at the same time: the author gets the fields, everyone else gets the same detail as text with the RSVP buttons and the comment box still live. It is a courtesy and not a permission — `canEdit` compares two strings from settings, and `PUT /api/calendar` still takes an edit from anybody. Authentication is what turns it into a rule.
 
-**Phase 22 — the long wait, and what it was hiding.** `POST /api/chat` had been failing with a bare `Internal Server Error` and a response body DevTools would not even show. It was not the API: its error middleware logs every 500 and the log was clean. It was **the dev proxy in front of the rewrites**, which gives up after 30s (`proxyTimeout || 30000` in `next/dist/server/lib/router-utils/proxy-request.js`) and answers plain text. A reasoning model with two tool rounds takes 11-30s, and one measured turn took 71. Three numbers now stack deliberately: a 90s timeout per model call, a 110s budget for the whole turn (rounds already running finish, none is started past it), and `experimental.proxyTimeout` at 150s above both — so a slow provider comes back as a legible 502 or a part-way answer, never as the proxy's opaque 500. The client also now says "the data API did not answer" when a reply has no JSON in it, because that is the proxy talking and not the API.
+**Phase 19 — the household is data, not configuration.** Who lives here started as `HOUSEHOLD_PEOPLE`, a comma-separated line in `.env`, which was wrong twice over: the calendar points at these people by name, and `.env` is for things the server needs before it can talk to anything. It is now a `family` collection (Mongo) / table (Postgres) behind `GET`/`PUT /api/family`, with `list_family` on the MCP side, and the setting is gone. A person is a name and a role and nothing else — no contact details, no birthdays, because nothing reads them and a field nothing reads goes stale; the obvious next one is a colour for the calendar chips, when the grid actually uses it. Two people may not share a name, since an RSVP is keyed by name and a duplicate would make two people one. `cleanPerson` moved from `calendar.ts` to `family.ts` and the calendar imports it, which is the right direction: events reference people. **Settings became tabs** at the same time — You, Family, Region, Database, Inference, Appearance — because the page had grown past the point where one scroll of cards was readable, and because the family list does not belong under a "Save to .env" button. Family and appearance save themselves (family writes per keystroke, the theme never leaves the browser), so the save bar only appears on the four `.env` tabs, and a dot marks a tab holding an unsaved change.
 
-**Chat history**, while we were in there: a `chats` collection keyed by day (`lib/chat-log.ts`), written by the API at the end of a turn and read back through a day picker in the chat header. Reasoning traces and tool-call ids are dropped on the way in — large, provider-specific, and meaningless a day later. Asking something while reading an old day starts today's thread rather than appending to one already written.
-
-**Two CSS loaders** from uiverse.io (both MIT, both recoloured to the theme's tokens): Nawsome's nine-box choreography for the one wait long enough to deserve watching — the model writing, with the seconds counted beside it — and elijahgummer's bars everywhere else. `Skeleton` keeps its name and its `rows` prop, because fifteen call sites pass it; `rows` now reserves the height rather than drawing grey blocks, so nothing jumps when the data lands. Both stop moving under `prefers-reduced-motion`.
-
-**Subscriptions grew a cost and a cycle**, which is the thing a subscription page is for and which this one had been missing. `cost` plus one of `monthly`/`quarterly`/`yearly`/`weekly`/`one-off`, with `yearlyCost`, `monthlyCost` and `subscriptionTotals` putting them on one scale; the page shows per-month and per-year totals and a per-month figure on each row. A one-off is recorded but kept out of the recurring totals. A fixed set of cycles rather than a number of days: "every 3 months" is a quarter, and a free-form interval would buy nothing and cost a renewal-date calculator. Rows written before the columns existed read as a free monthly subscription.
+**Phase 20 — /mcp is two tabs.** Asking the data a question and wiring another client up to the same tools are two jobs, and nobody wants both at once, so **Chat** and **Tools & clients** are tabs. The chat gets the whole pane and is taller for it. The tab strip itself moved into `app/ui.tsx` as `Tabs` the moment a second page wanted one — `/settings` had it first, copied is where it would have stayed.
 
 **Phase 21 — region, and a model that had been retired.** Three things in one go, all of them things that only show up from using the app.
 
@@ -328,49 +334,39 @@ The chat started answering `NVIDIA NIM (Nemotron) refused the request: Gone`. 41
 
 **The chat renders Markdown.** The models were already answering in it and the page was showing the asterisks.
 
-**Phase 20 — /mcp is two tabs.** Asking the data a question and wiring another client up to the same tools are two jobs, and nobody wants both at once, so **Chat** and **Tools & clients** are tabs. The chat gets the whole pane and is taller for it. The tab strip itself moved into `app/ui.tsx` as `Tabs` the moment a second page wanted one — `/settings` had it first, copied is where it would have stayed.
+**Phase 22 — the long wait, and what it was hiding.** `POST /api/chat` had been failing with a bare `Internal Server Error` and a response body DevTools would not even show. It was not the API: its error middleware logs every 500 and the log was clean. It was **the dev proxy in front of the rewrites**, which gives up after 30s (`proxyTimeout || 30000` in `next/dist/server/lib/router-utils/proxy-request.js`) and answers plain text. A reasoning model with two tool rounds takes 11-30s, and one measured turn took 71. Three numbers now stack deliberately: a 90s timeout per model call, a 110s budget for the whole turn (rounds already running finish, none is started past it), and `experimental.proxyTimeout` at 150s above both — so a slow provider comes back as a legible 502 or a part-way answer, never as the proxy's opaque 500. The client also now says "the data API did not answer" when a reply has no JSON in it, because that is the proxy talking and not the API.
 
-**Phase 19 — the household is data, not configuration.** Who lives here started as `HOUSEHOLD_PEOPLE`, a comma-separated line in `.env`, which was wrong twice over: the calendar points at these people by name, and `.env` is for things the server needs before it can talk to anything. It is now a `family` collection (Mongo) / table (Postgres) behind `GET`/`PUT /api/family`, with `list_family` on the MCP side, and the setting is gone. A person is a name and a role and nothing else — no contact details, no birthdays, because nothing reads them and a field nothing reads goes stale; the obvious next one is a colour for the calendar chips, when the grid actually uses it. Two people may not share a name, since an RSVP is keyed by name and a duplicate would make two people one. `cleanPerson` moved from `calendar.ts` to `family.ts` and the calendar imports it, which is the right direction: events reference people. **Settings became tabs** at the same time — You, Family, Database, Inference, Appearance — because the page had grown past the point where one scroll of cards was readable, and because the family list does not belong under a "Save to .env" button. Two of the five tabs save themselves (family writes per keystroke, the theme never leaves the browser), so the save bar only appears on the three that are `.env`, and a dot marks a tab holding an unsaved change.
+**Chat history**, while we were in there: a `chats` collection keyed by day (`lib/chat-log.ts`), written by the API at the end of a turn and read back through a day picker in the chat header. Reasoning traces and tool-call ids are dropped on the way in — large, provider-specific, and meaningless a day later. Asking something while reading an old day starts today's thread rather than appending to one already written.
 
-**Phase 16 — motion, home control, and a phone layout.** GSAP is loaded with a dynamic `import()` from `app/page-motion.tsx`, one wrapper around the page pane, so it stays out of the server bundle. A navigation leaves with `power2.in` (opacity and a few pixels of translate, 200ms) and enters with `power2.out` (280ms). `prefers-reduced-motion` skips both and the pane stays visible. Tweens are killed on cleanup; a second navigation while a leave is already underway swaps to the newest page instead of chaining fades. `app/loading.tsx` is the route skeleton. **Home control** (`/control`) lists low stock, recent bills, and subscriptions from the existing hooks, and whether the data API and the selected database answered. It links to the page that can change each of those, and it says NAS shares, volumes, and power switches are not connected. On a narrow screen the sidebar is a top bar with a menu; wide tables scroll inside their cards.
+**Phase 23 — loaders and subscription totals.** Two CSS loaders from uiverse.io (both MIT, both recoloured to the theme's tokens): Nawsome's nine-box choreography for the one wait long enough to deserve watching — the model writing, with the seconds counted beside it — and elijahgummer's bars everywhere else. `Skeleton` keeps its name and its `rows` prop, because fifteen call sites pass it; `rows` now reserves the height rather than drawing grey blocks, so nothing jumps when the data lands. Both stop moving under `prefers-reduced-motion`. Subscriptions grew `cost` and `cycle` (`monthly` / `quarterly` / `yearly` / `weekly` / `one-off`), with `yearlyCost`, `monthlyCost` and `subscriptionTotals` putting them on one scale; the page shows per-month and per-year totals and a per-month figure on each row. A one-off is recorded but kept out of the recurring totals.
 
 ## Where the numbers come from
 
-Audited on 2026-10-18 against MongoDB, before the cutover to Postgres. The client fetches and `lib/` have not changed since, so the static half — no mock data in the pages — still describes the app. The empirical half has not been repeated against Supabase: `server/db.ts` has never executed a query. The write-up below is the record of that Mongo check, not a verification of the current database.
+**Statically.** Every figure on screen comes from an `/api/*` response. The
+client calls `/api/inventory`, `/api/bills`, `/api/analytics`, `/api/subscriptions`,
+`/api/calendar`, `/api/family`, `/api/settings`, `/api/mcp`, `/api/chat`, and
+`/api/chat-log` — no mock, sample or fallback dataset exists in `app/`, `lib/`
+or `server/`. Array literals in `app/` are navigation, presets, axis ticks and
+form suggestions only; numeric `?? 0` defaults are empty-series guards, not
+stand-ins for missing data.
 
-**Statically.** The only `fetch` calls in the client are `/api/inventory`
-(`use-inventory.ts`), `/api/analytics` and `/api/bills` (`use-api.ts`,
-`upload/page.tsx`). The server reads nothing but the two Mongo collections. The
-array literals left in `app/` are the nav links, the date-range presets, the
-axis tick steps and `COMMON_UNITS` (a datalist of unit suggestions for the bill
-form) — interface, not content. No mock, sample or fallback dataset exists
-anywhere in `app/`, `lib/` or `server/`; the numeric `?? 0` defaults are
-empty-series guards that render as ₹0, not stand-ins for missing data.
+**Empirically (2026-10-18, MongoDB).** An empty database produced empty pages
+everywhere. Canary rows written directly into Mongo moved every counter and chart
+to match. That probe has not been repeated against Supabase, but the client and
+`lib/` paths are the same for both drivers.
 
-**Empirically.** Pointed the API at an empty database (`MONGODB_DB=homesystem_probe`)
-and loaded every page: Overview showed 0/0/0/0, Inventory had no tabs at all,
-Analytics rendered no charts and no stat tiles, and the bill form had no shop or
-item suggestions and a ₹0.00 total. Nothing that looked like data survived an
-empty database. Then wrote a single canary category and two canary bills
-*directly into Mongo*, bypassing the UI, and every figure moved to match them:
-1 category / 1 item / 1 running low, ₹176 spent, ₹88 per bill, +28.6% basket
-inflation (77 → 99 per jar), a one-slice pie at 100%, and August gap-filled as
-₹0 between the two bills. Probe database dropped afterwards.
-
-**The one nuance:** what `pnpm seed` writes is invented — the bills, the six
-subscriptions and the nine calendar entries alike. They are real database rows
-and everything on screen is genuinely derived from them, but they are not real
-purchases or real plans; every bill is noted "demo data" and so is every
-calendar entry, and `mise run seed -- --clear` plus your own entries replace
-them. The starter inventory is likewise seed data in `scripts/`, read once at
-seed time and never again.
+**Seed data.** What `pnpm seed` writes is invented — bills, subscriptions and
+calendar entries alike (all marked demo). They are real database rows and the UI
+derives from them honestly; `mise run seed -- --clear` plus your own entries
+replace them. The starter inventory lives in `scripts/` and is written once at
+seed time.
 
 ## Known issues
 
 - **The data API must be restarted after `DB_SELECT` changes.** Node reads `.env` at startup. A process started against Supabase keeps using Supabase until it is restarted.
 - **Phone width was checked at 390×844** on 2026-10-18 with a device-metrics override. Headless Chrome on Windows still clamps a real window to 500px, and a physical phone has not been used. At 390px the sidebar is a top bar and a menu, the page does not scroll sideways, and the subscriptions table (832px wide) scrolls inside its card.
 - **The bill form has still not been typed through by hand.** Navigation was clicked in a browser on 2026-10-18 (overview, inventory, home control, settings, subscriptions), including the phone-width override. Earlier states that need a click to reach — the history drawer, the delete confirmation — were rendered by temporarily forcing them and then reverting. The tag → spend join was verified against real data outside the UI.
-- **The mise tasks have not been run through mise** — it isn't installed on the machine they were written on. Each task's command was run directly and works (`node scripts/doctor.mjs`, `node scripts/seed.mjs`, `node scripts/dev.mjs`), so what is unverified is the `mise.toml` itself: the tool pins resolving, `[env]` reaching the tasks, and `mise run seed -- --clear` forwarding its argument.
+- **The mise tasks have not been run through mise** — it isn't installed on the machine they were written on. Each task's command was run directly and works (`node scripts/doctor.mjs`, `node scripts/seed.mjs`, `node scripts/dev.mjs`), so what is unverified is the `mise.toml` wrapper itself: tool pins resolving and `mise run seed -- --clear` forwarding its argument.
 - **Deleting an item is still one click, and bills are still write-once.** The confirmation added in phase 10 covers categories only. Nothing in the app can recover a deleted item or category: the documents are gone, and the only trace is the purchase history, which keeps the item id and name of anything that was ever bought (that is what the lost category was rebuilt from).
 - Recharts ships a sizeable client bundle for four charts. Fine for a LAN app; worth a second look if the analytics page ever needs to be fast over a slow link.
 
