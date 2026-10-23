@@ -1,6 +1,10 @@
 # Home System
 
-Self-hosted software for household inventory, grocery bills, spend analytics, and a shared family calendar. Next.js serves the UI; Express serves `/api/*`. Configuration and database choice live in `.env`.
+> Self-hosted household operations — inventory, grocery bills, spend analytics, and a shared family calendar.
+
+**Stack:** [Next.js](https://nextjs.org/) 16 (UI) · [Express](https://expressjs.com/) (API) · MongoDB or Postgres (via `.env`)
+
+## Screenshots
 
 <p align="center">
   <img src="docs/images/dashboard.png" alt="Overview — stock counters, buy-next list, and categories" width="720" />
@@ -18,26 +22,32 @@ Self-hosted software for household inventory, grocery bills, spend analytics, an
   <img src="docs/images/upload.png" alt="Bill entry and recent purchases" width="360" />
 </p>
 
+*Demo data shown; run `pnpm seed` after setup to load the same sample household.*
+
 ## Features
 
-| Area | What you get |
+| Module | Description |
 | --- | --- |
-| **Overview** | Category and stock counters, a **Buy next** list when counts hit minimums |
-| **Inventory** | Tabs per category, tags, and per-item purchase history |
-| **Bills** | Line items with unit pricing (kg, litre, piece) and comparison to past prices |
-| **Analytics** | Monthly spend, projections, deviations, and inflation views |
-| **Calendar** | Shared events with RSVPs, bookings, and comments |
-| **MCP** | Household data exposed as MCP tools, plus an in-app chat (Ollama, NVIDIA NIM, or OpenRouter) |
-| **Settings** | Household profile, region, database, inference engine, and theme |
+| Overview | Stock counters and a **Buy next** list when items hit their minimum |
+| Inventory | Category tabs, tags, and purchase history per item |
+| Bills | Per-unit pricing (kg, litre, piece) with comparison to past purchases |
+| Analytics | Monthly spend, projections, deviations, and inflation |
+| Calendar | Shared events, RSVPs, bookings, and comments |
+| MCP | Household data as MCP tools, plus chat (Ollama, NVIDIA NIM, or OpenRouter) |
+| Settings | Profile, region, database, inference engine, and theme |
 
-Screenshots use demo data from `pnpm seed`.
+## Getting started
 
-## Quick start
+### Prerequisites
 
-**Requirements:** [mise](https://mise.jdx.dev) (recommended) or Node 24 + pnpm 12, and either MongoDB or Postgres.
+- [mise](https://mise.jdx.dev) (recommended) or **Node 24** and **pnpm 12**
+- **MongoDB** or **Postgres** (Supabase-compatible via `DATABASE_URL`)
 
-1. Copy `.env.example` to `.env` and set `DB_SELECT` to `mongodb` or `supabase`, with the matching connection variables.
-2. Run setup, prepare the database, seed demo data, and start the app:
+### Install and run
+
+1. Copy [`.env.example`](.env.example) to `.env`.
+2. Set `DB_SELECT` to `mongodb` or `supabase` and fill in the matching connection settings.
+3. Run:
 
 ```bash
 mise run setup      # toolchain + dependencies, creates .env if missing
@@ -47,24 +57,35 @@ mise run seed       # inventory, demo bills, subscriptions and calendar (-- --cl
 mise run develop    # pages on :3000, data API on :4000
 ```
 
-Without mise (`winget install jdx.mise`), use `pnpm install`, `pnpm run doctor`, `pnpm migrate`, `pnpm seed`, `pnpm dev`, and `pnpm check`. Note: `pnpm doctor` is pnpm’s own command and does not run this project’s checks.
+**Without mise** ([install](https://mise.jdx.dev) · Windows: `winget install jdx.mise`):
 
-The UI stays empty until the database is reachable. An empty database stays empty until you run `mise run seed` (or `pnpm seed`).
+```bash
+pnpm install
+pnpm run doctor    # this project's checks — not pnpm's built-in doctor
+pnpm migrate
+pnpm seed
+pnpm dev
+pnpm check
+```
+
+The app needs a reachable database. Until you seed, an empty database shows an empty UI.
 
 ## Documentation
 
-Architecture, API routes, pricing logic, and project notes: [`docs/README.md`](docs/README.md).
+Deep dive (architecture, API, pricing maths, decisions): [`docs/README.md`](docs/README.md).
 
 ## License
 
-Home System is **source-available** under the [Functional Source License 1.1](LICENSE) (FSL-1.1-ALv2, [Fair Source](https://fair.io/)).
+Source-available under the [Functional Source License 1.1](LICENSE) (**FSL-1.1-ALv2**, [Fair Source](https://fair.io/)).
 
-- **Self-host:** use, modify, and run it for yourself or your organization — free.
-- **Commercial hosting or competing product:** requires a separate agreement; see [docs/licensing.md](docs/licensing.md).
-- **Over time:** each published version becomes [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) two years after that version ships.
+| Use | |
+| --- | --- |
+| Self-host for personal or internal use | Allowed — free |
+| Commercial hosting or competing product | [Commercial terms](docs/licensing.md) |
+| Each release, after two years | Becomes [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
 
-FSL is not OSI-approved open source. Use “source-available” or “Fair Source” when precision matters.
+FSL is not OSI open source; prefer **source-available** or **Fair Source** when that distinction matters.
 
 ## Contributing
 
-Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup and the PR workflow, [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community standards, and [SECURITY.md](SECURITY.md) to report vulnerabilities privately.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and [SECURITY.md](SECURITY.md) for how to participate and report issues safely.
