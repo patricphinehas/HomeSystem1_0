@@ -3,6 +3,22 @@
 Household inventory, bill entry and price analytics. Next.js 16 renders the
 pages, Express serves every `/api/*` route, and `.env` chooses the database.
 
+<p align="center">
+  <img src="docs/images/dashboard.png" alt="Overview — stock counters, buy-next list, and categories" width="720" />
+</p>
+
+<p align="center">
+  <img src="docs/images/analytics.png" alt="Analytics — spend, inflation, and category breakdown" width="360" />
+  &nbsp;
+  <img src="docs/images/calendar.png" alt="Family calendar with events and RSVPs" width="360" />
+</p>
+
+<p align="center">
+  <img src="docs/images/inventory.png" alt="Inventory tabs and buy-next checklist" width="360" />
+  &nbsp;
+  <img src="docs/images/upload.png" alt="Bill entry and recent purchases" width="360" />
+</p>
+
 `DB_SELECT=mongodb` uses the local MongoDB (`MONGODB_URI`, database `MONGODB_DB`).
 `DB_SELECT=supabase` uses `DATABASE_URL`. Nothing shows data until that database
 is reachable, and an empty one means an empty app until `pnpm seed` runs.
