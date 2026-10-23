@@ -5,6 +5,8 @@ pages, an Express API for the data, and either Supabase or MongoDB behind it —
 `DB_SELECT` in `.env` chooses. Nothing is read from or written to disk at runtime.
 Last updated: 2026-10-23.
 
+Quick start and a route index live in the [repository `README.md`](../README.md).
+
 ## What it does
 
 - **Overview** (`/`) — four counters (categories, items, running low, out of stock) and the first six things to buy.
