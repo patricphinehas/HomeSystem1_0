@@ -1,7 +1,6 @@
 # Home System
 
-Household inventory, bill entry and price analytics. Next.js 16 renders the
-pages, Express serves every `/api/*` route, and `.env` chooses the database.
+Self-hosted software for household inventory, grocery bills, spend analytics, and a shared family calendar. Next.js serves the UI; Express serves `/api/*`. Configuration and database choice live in `.env`.
 
 <p align="center">
   <img src="docs/images/dashboard.png" alt="Overview — stock counters, buy-next list, and categories" width="720" />
@@ -19,9 +18,26 @@ pages, Express serves every `/api/*` route, and `.env` chooses the database.
   <img src="docs/images/upload.png" alt="Bill entry and recent purchases" width="360" />
 </p>
 
-`DB_SELECT=mongodb` uses the local MongoDB (`MONGODB_URI`, database `MONGODB_DB`).
-`DB_SELECT=supabase` uses `DATABASE_URL`. Nothing shows data until that database
-is reachable, and an empty one means an empty app until `pnpm seed` runs.
+## Features
+
+| Area | What you get |
+| --- | --- |
+| **Overview** | Category and stock counters, a **Buy next** list when counts hit minimums |
+| **Inventory** | Tabs per category, tags, and per-item purchase history |
+| **Bills** | Line items with unit pricing (kg, litre, piece) and comparison to past prices |
+| **Analytics** | Monthly spend, projections, deviations, and inflation views |
+| **Calendar** | Shared events with RSVPs, bookings, and comments |
+| **MCP** | Household data exposed as MCP tools, plus an in-app chat (Ollama, NVIDIA NIM, or OpenRouter) |
+| **Settings** | Household profile, region, database, inference engine, and theme |
+
+Screenshots use demo data from `pnpm seed`.
+
+## Quick start
+
+**Requirements:** [mise](https://mise.jdx.dev) (recommended) or Node 24 + pnpm 12, and either MongoDB or Postgres.
+
+1. Copy `.env.example` to `.env` and set `DB_SELECT` to `mongodb` or `supabase`, with the matching connection variables.
+2. Run setup, prepare the database, seed demo data, and start the app:
 
 ```bash
 mise run setup      # toolchain + dependencies, creates .env if missing
@@ -31,39 +47,24 @@ mise run seed       # inventory, demo bills, subscriptions and calendar (-- --cl
 mise run develop    # pages on :3000, data API on :4000
 ```
 
-Without mise (`winget install jdx.mise`), the same things are `pnpm install`,
-`pnpm run doctor`, `pnpm migrate`, `pnpm seed`, `pnpm dev` and `pnpm check`.
-`pnpm doctor` is pnpm’s own command and does not run this project’s checks.
+Without mise (`winget install jdx.mise`), use `pnpm install`, `pnpm run doctor`, `pnpm migrate`, `pnpm seed`, `pnpm dev`, and `pnpm check`. Note: `pnpm doctor` is pnpm’s own command and does not run this project’s checks.
 
-- `/` — counters and what to buy next.
-- `/inventory` — a tab per category; an item joins **Buy next** when its count reaches its minimum. Tag items here, or open a row’s chart button for its full purchase history.
-- `/upload` — enter a bill; each line is priced per kg / litre / piece and compared with what it used to cost.
-- `/analytics` — spend, projection, deviations and price inflation.
-- `/calendar` — the shared family calendar: pick a day, add what is planned, then open it for the activity, venue, who is coming and their RSVPs, the booking, tickets and the comments.
-- `/mcp` — the household data as MCP tools any client can call, plus a chat window that calls them for you (Ollama, NVIDIA NIM or OpenRouter).
-- `/manual` — the user manual, page by page.
-- `/settings` — tabs for you, the family, the region (locale, timezone, currency), the database, the inference engine and the theme. Everything but the family list and the theme writes to `.env`.
+The UI stays empty until the database is reachable. An empty database stays empty until you run `mise run seed` (or `pnpm seed`).
 
-Architecture, the API, the price maths, decisions, progress and known issues:
-[`docs/README.md`](docs/README.md).
+## Documentation
+
+Architecture, API routes, pricing logic, and project notes: [`docs/README.md`](docs/README.md).
 
 ## License
 
-Home System is **source-available** under the [Functional Source License 1.1](LICENSE)
-(FSL-1.1-ALv2, [Fair Source](https://fair.io/)).
+Home System is **source-available** under the [Functional Source License 1.1](LICENSE) (FSL-1.1-ALv2, [Fair Source](https://fair.io/)).
 
 - **Self-host:** use, modify, and run it for yourself or your organization — free.
-- **Commercial hosting / competing product:** not covered by FSL alone; you need a
-  separate commercial license from the maintainer (see [docs/licensing.md](docs/licensing.md)).
-- **Later:** each published version becomes [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)
-  two years after that version ships.
+- **Commercial hosting or competing product:** requires a separate agreement; see [docs/licensing.md](docs/licensing.md).
+- **Over time:** each published version becomes [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) two years after that version ships.
 
-FSL is not OSI-approved open source. Do not describe the project as “open source”
-if you need the strict OSI meaning.
+FSL is not OSI-approved open source. Use “source-available” or “Fair Source” when precision matters.
 
 ## Contributing
 
-Bug reports, feature ideas, and pull requests are welcome. See
-[CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the PR workflow, and contributor
-terms. Please follow [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Security issues:
-[SECURITY.md](SECURITY.md).
+Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup and the PR workflow, [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community standards, and [SECURITY.md](SECURITY.md) to report vulnerabilities privately.
