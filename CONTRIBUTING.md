@@ -1,9 +1,7 @@
 # Contributing to Home System
 
-Thanks for your interest in improving Home System. This project is
-**source-available** under the [Functional Source License](LICENSE) (FSL-1.1-ALv2),
-not OSI open source — see the [License](#license) section in the README for what
-that means in practice.
+Thanks for your interest in improving Home System. This project is open source
+under the [MIT License](LICENSE).
 
 ## Local setup
 
@@ -57,31 +55,10 @@ mise run doctor
 
 ## License
 
-<!-- REVIEW FOR PATRIC: Contributor terms below — please read before merging outside contributions. -->
-
-### Contributor terms (please review, Patric)
-
 By submitting a pull request, patch, or other contribution to this repository,
-you agree that:
+you agree to license your contribution under the [MIT License](LICENSE), and you
+represent that you have the right to do so. Contributions are voluntary unless
+you have a separate written agreement with the project owner.
 
-1. **License.** Your contribution is licensed under the same terms as the
-   project: the Functional Source License, Version 1.1, ALv2 Future License
-   ([LICENSE](LICENSE)), including the grant of a future Apache 2.0 license two
-   years after each release that includes your contribution.
-
-2. **Relicensing.** You grant Patric Phinehas Raj and successors the right to
-   use, modify, and sublicense your contribution under any license, including
-   proprietary terms, which is needed so a future paid hosted offering can
-   include community improvements without conflicting licenses.
-
-3. **Authority.** You have the right to submit the work and it does not violate
-   any third-party rights.
-
-4. **No expectation of compensation.** Contributions are voluntary unless you
-   have a separate written agreement with the project owner.
-
-If you cannot agree to these terms, please do not submit a contribution. For
-questions, open a [GitHub Discussion](https://github.com/patricphinehas/HomeSystem1_0/discussions)
+Questions? Open a [GitHub Discussion](https://github.com/patricphinehas/HomeSystem1_0/discussions)
 or email [patricphinehas@gmail.com](mailto:patricphinehas@gmail.com).
-
-<!-- END REVIEW FOR PATRIC -->
