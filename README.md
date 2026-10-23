@@ -33,13 +33,9 @@ Architecture, the API, the price maths, decisions, progress and known issues:
 
 ## License
 
-Home System is **source-available** under the [Functional Source License 1.1](LICENSE)
-(FSL-1.1-ALv2, [Fair Source](https://fair.io/)). You may use, modify, and self-host
-it for any purpose **except** offering a competing commercial product or hosted service
-that substitutes for Home System or its planned paid offering. Each version you
-receive automatically becomes [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)
-two years after that version is published. This license is not OSI-approved — please
-do not call the project “open source.”
+Home System is [open source](LICENSE) under the **MIT License**. You may use,
+modify, and self-host it for any purpose, including commercial use, as long as
+you include the copyright notice. See [LICENSE](LICENSE) for the full text.
 
 ## Contributing
 
