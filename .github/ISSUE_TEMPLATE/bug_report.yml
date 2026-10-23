@@ -1,0 +1,58 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Security issues must **not** be filed here — see [SECURITY.md](https://github.com/patricphinehas/HomeSystem1_0/blob/main/SECURITY.md).
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: What did you expect, and what actually happened?
+      placeholder: Clear steps and the outcome you saw.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps so we can see the same behavior.
+      placeholder: |
+        1. DB_SELECT=...
+        2. Go to ...
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Git tag, commit SHA, or "main" and approximate date.
+      placeholder: e.g. main @ abc1234
+    validations:
+      required: false
+
+  - type: dropdown
+    id: database
+    attributes:
+      label: Database
+      options:
+        - MongoDB
+        - Supabase / Postgres
+        - Not sure
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Browser console, terminal output, or screenshots (drag and drop images here).
+    validations:
+      required: false
