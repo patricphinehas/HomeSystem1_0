@@ -1,7 +1,8 @@
 # Contributing to Home System
 
-Thanks for your interest in improving Home System. This project is open source
-under the [MIT License](LICENSE).
+Thanks for your interest in improving Home System. This project is
+**source-available** under the [Functional Source License](LICENSE) (FSL-1.1-ALv2).
+See [docs/licensing.md](docs/licensing.md) for self-host vs commercial use.
 
 ## Local setup
 
@@ -55,10 +56,30 @@ mise run doctor
 
 ## License
 
-By submitting a pull request, patch, or other contribution to this repository,
-you agree to license your contribution under the [MIT License](LICENSE), and you
-represent that you have the right to do so. Contributions are voluntary unless
-you have a separate written agreement with the project owner.
+<!-- REVIEW FOR PATRIC: Contributor terms below — please read before merging outside contributions. -->
 
-Questions? Open a [GitHub Discussion](https://github.com/patricphinehas/HomeSystem1_0/discussions)
+### Contributor terms
+
+By submitting a pull request, patch, or other contribution to this repository,
+you agree that:
+
+1. **License.** Your contribution is licensed under the same terms as the
+   project: FSL-1.1-ALv2 ([LICENSE](LICENSE)), including the future Apache 2.0
+   grant two years after each release that includes your contribution.
+
+2. **Relicensing.** You grant Patric Phinehas Raj and successors the right to
+   use, modify, and sublicense your contribution under any license, including
+   proprietary or commercial terms, so a paid hosted offering can include
+   community improvements without license conflicts.
+
+3. **Authority.** You have the right to submit the work and it does not violate
+   any third-party rights.
+
+4. **No expectation of compensation.** Contributions are voluntary unless you
+   have a separate written agreement with the project owner.
+
+If you cannot agree to these terms, please do not submit a contribution. For
+questions, open a [GitHub Discussion](https://github.com/patricphinehas/HomeSystem1_0/discussions)
 or email [patricphinehas@gmail.com](mailto:patricphinehas@gmail.com).
+
+<!-- END REVIEW FOR PATRIC -->
