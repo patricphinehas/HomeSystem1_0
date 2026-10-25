@@ -1,15 +1,24 @@
 # Electron migration: Home System as a desktop app
 
-**Status: planned, nothing built.** Written 2026-10-26. This is the plan for
-packaging this repo as one desktop application that installs with its own
-SQLite database and can be pointed at MongoDB or Supabase afterwards. Windows
-`.exe` first, then Linux (deb, rpm, AppImage).
+**Status: phases 0, 1, 2 and most of 5 are built and run; 3, 4, 6, 7 and 8 are
+not.** Written 2026-10-26, built the same day. This is the plan for packaging
+this repo as one desktop application that installs with its own SQLite database
+and can be pointed at MongoDB or Supabase afterwards — Windows `.exe` first,
+then Linux (deb, rpm, AppImage) — and, from here on, the record of what
+actually happened when it was.
 
-Nothing described here has been run. Where a claim comes from somewhere it is
-marked: **verified** means this repo's own copy of Next's docs under
-`node_modules/next/dist/docs/`, and the Electron version facts come from its
-release history, both checked 2026-10-26. Everything else is a decision to be
-tested in phase 0.
+Each phase below says what it is, then what was run. **Built** means it exists
+in the repo and was exercised; **not started** means exactly that. The claims
+marked **verified** come from this repo's own copy of Next's docs under
+`node_modules/next/dist/docs/`; the rest were settled by running them.
+
+| | |
+|---|---|
+| Electron | 44.9.3, pinned exactly — Node 24.22.0, Chrome 152 |
+| Installer | `dist/HomeSystem-Setup-0.1.0.exe`, **186 MB**, per-user NSIS, unsigned |
+| Installed size | 755 MB (490 MB of Electron, 263 MB of app.asar) |
+| Database | SQLite, in `%APPDATA%/homesystem/homesystem.db`, created on first run |
+| Not in it yet | the first-run chooser and backups (phase 3), the API token (phase 4), Linux targets (6), signing and updates (7), CI (8) |
 
 `docs/architecture.md` is the audit of where this app can run; it calls this
 plan **Target B** and points here rather than repeating it.
@@ -98,10 +107,10 @@ below keeps today's behaviour as its default.
 
 ---
 
-## Phase 0 — two spikes, before any app code
+## Phase 0 — two spikes, before any app code — **built, both passed**
 
-Both of these can sink the design, so they get proven first in a throwaway
-Electron project, not inside this repo.
+Both of these could have sunk the design, so they were proven first in a
+throwaway Electron project outside the repo.
 
 **Spike 1: `node:sqlite` inside Electron.** Electron ≥41 bundles Node 24 (44.x
 is on Node 24.21) and `node:sqlite` has been in Node since 22.5, so
@@ -124,9 +133,31 @@ charts (the client components hydrate) and `/devices` reaches the simulator.
 **Acceptance for the phase:** a window showing `/analytics` with data from a
 SQLite file in `userData`. Nothing else gets written until this passes.
 
+**What was run.** Spike 1: `node:sqlite` loads in Electron's main process and
+exports `DatabaseSync, Session, StatementSync, backup, constants`. It opened
+the repo's own seeded file (20 bills, 90 bill lines, 28 items, SQLite 3.53.4 —
+the same engine version the repo's Node has), created a fresh file under
+`userData` with WAL on, foreign keys on and a committed transaction, proved the
+`on delete cascade` fires and that a rollback leaves nothing behind. **No
+`better-sqlite3`, no native build, no `electron-rebuild`.** One correction to
+the plan above: the backup API is `sqlite.backup(...)` at module level, not
+`db.backup()` — phase 3 wants the former.
+
+Spike 2: `next({ dev: false })` prepared in ~330 ms inside Electron, served the
+production build on one ephemeral loopback port with `/api/*` going to Express
+first, and the window hydrated (a sidebar group answered a real click),
+client-side navigation kept the document, four Recharts surfaces drew on
+`/analytics`, and `/devices` rendered. The custom server is viable; the
+standalone route was not needed.
+
+Two incidental findings that shaped the rest: Electron needs a `package.json`
+with `main` in the app directory (a bare `main.js` gets "Unable to find
+Electron app"), and it warns in the console about a missing Content Security
+Policy, which is why phase 2 sets one.
+
 ---
 
-## Phase 1 — make the server embeddable
+## Phase 1 — make the server embeddable — **built**
 
 Repo changes only; nothing Electron-specific. This is the refactor that lets
 the same code run in both targets.
@@ -144,9 +175,29 @@ the same code run in both targets.
 repo; `pnpm check` (90 tests) and `tsc --noEmit` stay clean; `pnpm dev` is
 unaffected.
 
+**What was built.** `server/api.ts` holds every route and exports
+`createApi()`; `server/index.ts` is now eleven lines that listen on `API_PORT`,
+so `pnpm dev` and `pnpm api` are untouched. `server/host.ts` is the single-port
+host, runnable on its own (`pnpm host`). `server/paths.ts` resolves `.env`,
+`.mcp.json` and `sqlite/schema.sql`, each overridable by an environment
+variable (`HOME_SYSTEM_ENV_FILE`, `HOME_SYSTEM_MCP_FILE`,
+`HOME_SYSTEM_SQLITE_SCHEMA`) and each read per call, so a launcher that sets
+them late is still obeyed. `scripts/build-desktop.mjs` bundles with esbuild,
+every bare import left external.
+
+**What was run.** `node server/host.ts` served `/`, `/analytics`,
+`/inventory`, `/devices`, `/manual` and `/settings` as 200s and all five API
+routes beside them on one port. The compiled bundle (`desktop/dist/host.mjs`,
+127 kB, no type stripping involved) served the same. `PUT /api/settings` with
+`HOME_SYSTEM_ENV_FILE` pointed at a scratch file wrote to that file and left
+the repo's `.env` byte-identical. 90 tests and `tsc --noEmit` clean throughout.
+
+The seed is still a script rather than a callable module; phase 3's menu item
+is what needs that, so it was left alone.
+
 ---
 
-## Phase 2 — the Electron shell
+## Phase 2 — the Electron shell — **built**
 
 - `desktop/main.ts` and `desktop/preload.ts`, bundled by esbuild into
   `desktop/dist`. Electron pinned to an exact version.
@@ -158,12 +209,53 @@ unaffected.
 - Window size and position remembered in `userData`.
 - Menu: Reload · Zoom · DevTools (dev builds only) · **Data** (open folder,
   back up, load demo data, clear data) · Help → the in-app `/manual`.
-- `pnpm desktop` runs the shell against `next dev` for iteration;
-  `pnpm desktop:prod` runs it against the built output.
+- `pnpm desktop` builds the bundles and runs the app against the production
+  build; `pnpm desktop:dev` runs Next's dev server in the same process.
+
+**What was built.** `desktop/main.ts` and `desktop/preload.ts`, bundled to
+`desktop/dist/` — the output moved out of `build/`, because electron-builder
+claims that directory as its own resources folder. The window is
+`contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`, with
+`will-navigate` and `setWindowOpenHandler` confined to the app's own origin and
+anything else handed to the OS browser. A Content Security Policy of `'self'`
+throughout is set on every response — `connect-src 'self'` being the line that
+matters, since it is what a stray script would need to send the household's
+data anywhere. There is a single-instance lock, a File/View/Help menu, a log at
+`<userData>/logs/main.log` because a packaged app has no console, and the
+window's size and position are remembered.
+
+**What was run,** against the real window over the DevTools protocol: the app
+came up on a random loopback port with its data in `%APPDATA%/homesystem`; the
+preload bridge was there and `window.require` and `window.process` were both
+`undefined`, which is context isolation proving itself from the renderer's
+side; a sidebar group answered a click; `/analytics` drew four charts from a
+seeded database; a link click navigated to `/inventory` without reloading the
+document; and the content security policy changed none of it.
+
+**Three bugs that only running it could have found.**
+
+1. `server/db.sqlite.ts` resolved `SQLITE_PATH` once, at import. The desktop
+   sets that variable after its own process starts, so the app quietly used the
+   repo's `data/homesystem.db` instead of the one in the user's data directory.
+   The path is read per call now, and `describeTarget()` reports the file that
+   is actually open.
+2. The schema path resolved relative to the bundle, which sits one directory
+   deeper than `server/` — `desktop/dist/../sqlite/schema.sql` does not exist.
+   The desktop now sets `HOME_SYSTEM_SQLITE_SCHEMA` explicitly, which is what
+   `server/paths.ts` was for.
+3. The window's size was never saved: a close that comes from a quit does not
+   always reach the window's own `close` event. It is saved on `before-quit` as
+   well now, and the write no longer swallows its error silently.
+
+One thing worth knowing for phase 3: Next loads any `.env` in its project
+directory into `process.env` itself. Values the desktop sets before starting
+the host still win, because Next does not overwrite what is already there — but
+a `.env` shipped beside the program would otherwise fill in every key the
+household's own file does not mention.
 
 ---
 
-## Phase 3 — first run, and the database the user chooses
+## Phase 3 — first run, and the database the user chooses — **not started**
 
 - On first launch, write `<userData>/.env` from `.env.example` with
   `DB_SELECT=sqlite` and `SQLITE_PATH=<userData>/homesystem.db`, then
@@ -187,7 +279,7 @@ unaffected.
 
 ---
 
-## Phase 4 — close the no-auth hole, on this target only
+## Phase 4 — close the no-auth hole, on this target only — **not started**
 
 The API has no authentication, which is fine on a loopback port right up until
 you remember that every other process on the machine can reach a loopback port.
@@ -208,7 +300,7 @@ an MCP client sending the header works.
 
 ---
 
-## Phase 5 — Windows first
+## Phase 5 — Windows first — **the installer builds; not yet installed on a clean machine**
 
 - **electron-builder** pinned to 26.x, NSIS target, `oneClick: false`, per-user
   install, app id, icons, output named `HomeSystem-Setup-x.y.z.exe`.
@@ -223,9 +315,31 @@ enter a bill; watch `/analytics` move; point `/devices` at `scripts/edge-sim.mjs
 and send a command; restart and confirm the data is still there. Then uninstall
 and confirm the database survived.
 
+**What was built.** `electron-builder.yml` (electron-builder 26.18.0, pinned),
+`pnpm pack` for an unpacked build and `pnpm dist:win` for the installer. The
+icon in `desktop/resources/` is a placeholder drawn from the app's own accent
+colour — a house with three rising bars — and is the first thing a designer
+should replace. `pnpm dist:linux` is configured for deb, rpm and AppImage but
+has never been run; that is phase 6.
+
+**What was run.** The unpacked build (`dist/win-unpacked`) launched, served its
+pages, read the SQLite database in `%APPDATA%/homesystem`, reported 19 bills
+through `/api/analytics` and drew the analytics charts — **from inside the
+asar**, including Next compiling `next.config.ts` out of the archive in 29 ms.
+Then `HomeSystem-Setup-0.1.0.exe`, **186 MB**, built clean and unsigned. **It
+has not been installed**: that changes a machine, and it is the household's
+call rather than the build's.
+
+**Two packaging facts worth keeping.** `.next/dev` holds hundreds of megabytes
+of `next dev` leftovers (756 MB here) that the production server never opens —
+shipping it made the first package 1.5 GB, and excluding it along with the
+build cache took the app archive to 263 MB. And electron-builder treats
+`./build` as its own resources directory and excludes it from the app, which is
+why the esbuild output lives in `desktop/dist` instead.
+
 ---
 
-## Phase 6 — Linux
+## Phase 6 — Linux — **configured, never run**
 
 The same config on a Linux runner, three targets covering the distributions
 named: **deb** (Ubuntu, Mint), **rpm** (Fedora, openSUSE), **AppImage** for
@@ -234,7 +348,7 @@ requirements some distributions impose on Electron.
 
 ---
 
-## Phase 7 — signing and updates
+## Phase 7 — signing and updates — **not started**
 
 A decision, not a default (see above). In cost order: ship unsigned with a
 documented SmartScreen warning; sign with an OV or EV certificate; or
@@ -244,7 +358,7 @@ once there is somebody to update other than the author.
 
 ---
 
-## Phase 8 — CI
+## Phase 8 — CI — **not started**
 
 GitHub Actions on a tag: `tsc --noEmit` and `pnpm check` first, then a
 `windows-latest` job and an `ubuntu-latest` job producing the installers as
@@ -261,9 +375,9 @@ release artifacts. Nothing gets built by hand twice.
   other local processes out; it does not make the calendar's `createdBy` an
   identity. That seam is still the one sketched under *Future: authentication*
   in `docs/architecture.md`.
-- **Size.** A custom server means shipping `next` and its SWC binaries; expect
-  an installer in the hundreds of megabytes before any standalone optimisation.
-  Measure it in phase 5 before deciding whether it matters.
+- **Size.** Measured rather than guessed: a 186 MB installer and 755 MB on
+  disk, most of it Electron itself. If that is too much, the standalone server
+  is the next thing to try, with the Windows caveat above.
 - **The smart home is still only simulator-verified.** The desktop build makes
   real hardware *possible*; it does not make it tested.
 
@@ -282,8 +396,25 @@ release artifacts. Nothing gets built by hand twice.
 
 ---
 
+## What to do next
+
+In this order, and the first one is small:
+
+1. **Install the built installer on a clean Windows account** and run phase 5's
+   acceptance list against it. Everything above was verified from the repo and
+   from `dist/win-unpacked`; an installed copy is the one thing nobody has
+   seen.
+2. **Phase 3**, which is what makes the app usable by somebody who did not
+   build it: a first-run screen, demo data from the menu, a backup that copies
+   the file, and a restart offer when the database is switched.
+3. **Phase 4**, before this is ever run on a machine with other people on it.
+4. Then Linux, then signing, then CI.
+
 ## Rough effort
 
-Phase 0 half a day · phases 1–3 about a day each · phase 4 half a day · phase 5
-a day · phase 6 half a day · phases 7–8 a day between them. Six to seven days,
-and phases 0–3 are the ones that prove the idea is worth the rest.
+The original estimate was six to seven days: half a day for phase 0, about a
+day each for 1 to 3. Phases 0, 1, 2 and the packaging took one sitting between
+them, which says more about the groundwork already in the repo — pure `lib/`,
+one database facade, a settings page that already writes `.env` — than about
+the estimate. What is left is phases 3 and 4, and those are the ones with real
+decisions in them.
