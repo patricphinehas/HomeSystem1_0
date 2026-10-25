@@ -172,6 +172,10 @@ grouped underneath, and the extensions come after that.
   phase-by-phase record.
 - [`docs/architecture.md`](docs/architecture.md) — the deployment plan, the
   blockers that stop it working today, and the authentication seam.
+- [`electron_migration.md`](electron_migration.md) — the plan for shipping this
+  as a desktop app: installs with SQLite, connects to the database of your
+  choice, Windows `.exe` first and then deb, rpm and AppImage. Planned, not
+  built.
 - `/manual` in the running app — the same thing written for whoever lives in
   the house rather than whoever changes the code.
 

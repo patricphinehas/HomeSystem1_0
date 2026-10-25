@@ -1,8 +1,14 @@
 # Deployment architecture
 
-Target: **pages on GitHub Pages, API on Render, data in MongoDB Atlas**, deployed
-by hand. This file is the plan, plus the list of things that stop it working
-today.
+Two targets live in this file, and they are different answers to the same
+question — where does this household's copy actually run?
+
+- **Target A — hosted**: pages on GitHub Pages, API on Render, data in MongoDB
+  Atlas, deployed by hand. Audited, not built; the blockers below are why.
+- **Target B — the desktop app**: one Electron application that installs on a
+  machine in the house, carries its own SQLite database, and can be pointed at
+  MongoDB or Supabase instead. Planned, not built. It is further down this
+  file, and it is the target that makes the smart home work (blocker 7).
 
 ## Rules and conditions
 
@@ -39,8 +45,9 @@ cautious:
 
 **Rules for changing this file.** It is an audit, so it only ever says what was
 run. A blocker leaves this list when the code changes, not when a fix is
-described, and a blocker that was verified says how. If the topology changes,
-the whole topology changes: there is one target in here, not a menu.
+described, and a blocker that was verified says how. One plan per target, and
+a change to a target rewrites that target's section rather than adding a third
+one beside it.
 
 For how the app works internally, the rules a change has to respect, and the
 development log, see [`README.md`](README.md).
@@ -274,6 +281,29 @@ API URL is fine there. Nothing else is.
 
 Step 4's `.nojekyll` and `basePath` are the two that bite silently: without them
 the page loads and every asset 404s.
+
+---
+
+# Target B: the desktop app
+
+**Status: planned, nothing built.** One Electron application that installs on a
+machine in the house, carries its own SQLite database, and can be pointed at
+MongoDB or Supabase afterwards: Express serves `/api/*` and hands everything
+else to Next in the same process, on one loopback port, with `.env`, the
+database file and the logs in Electron's per-user data directory.
+
+It is the target that makes four of the blockers above stop existing rather
+than get solved — 2 (no static export, so no rewrites to break), 3 (one
+origin), 5 (loopback plus a per-launch token) and, the one that matters most,
+**7**: the app would be on the same network as the edge controllers, which is
+the only arrangement in which `/devices` can ever reach real hardware.
+
+**The plan itself is `electron_migration.md`** at the repo root: the two spikes
+that come before any app code, the repo changes it needs (`createApi()` out of
+`server/index.ts`, injected paths for `.env` and `.mcp.json`, an esbuild step
+instead of type stripping), the Windows installer first and Linux after, what
+it does not solve, and the risks in the order they would bite. It is not
+repeated here.
 
 ---
 

@@ -46,7 +46,7 @@ const nav: Row[] = [
     group: "Groceries & expenses",
     hint: "What the house buys, and what it costs",
     items: [
-      { href: "/inventory", label: "Inventory management", icon: Package },
+      { href: "/inventory", label: "Inventory", icon: Package },
       { href: "/upload", label: "Enter bill", icon: Receipt },
       { href: "/subscriptions", label: "Subscriptions", icon: Repeat },
     ],
@@ -128,7 +128,7 @@ export function Sidebar() {
         <Link href="/" className="mb-4 px-3 text-sm font-semibold tracking-tight">
           Home System
         </Link>
-        <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-1 overflow-x-hidden overflow-y-auto">
           <NavRows path={path} />
         </div>
         <UserSlot name={user.name} household={user.household} />
@@ -139,7 +139,7 @@ export function Sidebar() {
 
 function NavRows({ path, roomy, onNavigate }: { path: string; roomy?: boolean; onNavigate?: () => void }) {
   return (
-    <div className="grid gap-1">
+    <div className="grid min-w-0 gap-1 *:min-w-0">
       {nav.map((row) =>
         isGroup(row) ? (
           <NavGroup key={row.group} {...row} path={path} roomy={roomy} onNavigate={onNavigate} />
@@ -170,14 +170,14 @@ function NavGroup({
   const id = `nav-${group.replace(/\W+/g, "-").toLowerCase()}`;
 
   return (
-    <div className="grid gap-1">
+    <div className="grid min-w-0 gap-1">
       <button
         type="button"
         aria-expanded={shown}
         aria-controls={id}
         title={hint}
         onClick={() => setOpen(!shown)}
-        className={`flex shrink-0 items-center gap-1 rounded-lg px-3 text-left text-[11px] font-medium tracking-wide text-muted uppercase transition hover:text-fg ${
+        className={`flex min-w-0 shrink-0 items-center gap-1 rounded-lg px-3 text-left text-[11px] font-medium tracking-wide text-muted uppercase transition hover:text-fg ${
           roomy ? "min-h-9" : "py-1.5"
         }`}
       >
@@ -190,7 +190,7 @@ function NavGroup({
         <span className="min-w-0 truncate">{group}</span>
       </button>
       {shown && (
-        <div id={id} className="grid gap-1 border-l border-border pl-2 ml-3">
+        <div id={id} className="ml-3 grid min-w-0 gap-1 border-l border-border pl-2 *:min-w-0">
           {items.map((item) => (
             <NavLink key={item.href} {...item} path={path} roomy={roomy} onNavigate={onNavigate} />
           ))}
@@ -218,7 +218,7 @@ function NavLink({
       href={href}
       aria-current={active ? "page" : undefined}
       onClick={onNavigate}
-      className={`flex shrink-0 items-center gap-2.5 rounded-xl px-3 text-sm transition ${
+      className={`flex min-w-0 shrink-0 items-center gap-2.5 rounded-xl px-3 text-sm transition ${
         roomy ? "min-h-10" : "py-2"
       } ${active ? "bg-accent-soft font-medium text-accent" : "text-muted hover:bg-bg hover:text-fg"}`}
     >
