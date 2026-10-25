@@ -1,5 +1,7 @@
 # Home System
 
+> Self-hosted household operations — inventory, grocery bills, spend analytics, and a shared family calendar.
+
 **Your own inflation rate, from your own receipts.** A published figure is an
 average over a basket somebody else chose. This works out what *your* basket
 did — weighted by what you actually spend, carried forward through the months
@@ -14,9 +16,43 @@ through an edge controller on your own network — is an extension, and the MCP
 tools are another way to ask the same data questions. Both are there so that
 one machine in the house can run the lot.
 
-Next.js 16 renders the pages, Express serves every `/api/*` route, and `.env`
-chooses the database: a **SQLite file**, a **MongoDB**, or **Supabase**
-(Postgres).
+**Stack:** [Next.js](https://nextjs.org/) 16 (UI) · [Express](https://expressjs.com/) (API) · SQLite, MongoDB, or Postgres (via `.env`)
+
+## Screenshots
+
+<p align="center">
+  <img src="docs/images/dashboard.png" alt="Overview — stock counters, buy-next list, and categories" width="720" />
+</p>
+
+<p align="center">
+  <img src="docs/images/analytics.png" alt="Analytics — spend, inflation, and category breakdown" width="360" />
+  &nbsp;
+  <img src="docs/images/calendar.png" alt="Family calendar with events and RSVPs" width="360" />
+</p>
+
+<p align="center">
+  <img src="docs/images/inventory.png" alt="Inventory tabs and buy-next checklist" width="360" />
+  &nbsp;
+  <img src="docs/images/upload.png" alt="Bill entry and recent purchases" width="360" />
+</p>
+
+*Demo data shown; run `pnpm seed` after setup to load the same sample household.*
+
+## Features
+
+| Module | Description |
+| --- | --- |
+| Overview | Stock counters and a **Buy next** list when items hit their minimum |
+| Inventory | Category tabs, tags, and purchase history per item |
+| Bills | Per-unit pricing (kg, litre, piece) with comparison to past purchases |
+| Subscriptions | Renewals, monthly and yearly cost, and who holds or shares each one |
+| Analytics | Monthly spend, projections, deviations, and inflation |
+| Calendar | Shared events, RSVPs, bookings, and comments |
+| Smart home | Air conditioning, hot water, pumps, and sensors through an edge controller on `/devices` |
+| Activity | Household activity and what the app can check about the machine it runs on, on `/control` |
+| MCP | Household data as MCP tools, plus chat (Ollama, NVIDIA NIM, or OpenRouter) |
+| Settings | Profile, region, database, inference engine, and theme |
+| Manual | The in-app user manual, in the same order as the sidebar |
 
 ## Before you start
 
@@ -74,6 +110,8 @@ stops. The schema is `sqlite/schema.sql`, which is `supabase/schema.sql` with
 SQLite's three fewer types; both are `create table if not exists`, so `migrate`
 is safe to re-run. `pnpm seed --clear` empties the database first.
 
+## Getting started
+
 ```bash
 mise run setup      # toolchain + dependencies, creates .env if missing
 mise run doctor     # Node, pnpm, packages, the database, the controllers, ports
@@ -84,10 +122,20 @@ mise run develop    # pages on :3000, data API on :4000
 mise run check      # the tests
 ```
 
-Without mise (`winget install jdx.mise`), the same things are `pnpm install`,
-`pnpm run doctor`, `pnpm migrate`, `pnpm seed`, `pnpm edge`, `pnpm dev` and
-`pnpm check`. `pnpm doctor` is pnpm's own command and does not run this
-project's checks.
+**Without mise** ([install](https://mise.jdx.dev) · Windows: `winget install jdx.mise`):
+
+```bash
+pnpm install
+pnpm run doctor    # this project's checks — not pnpm's built-in doctor
+pnpm migrate
+pnpm seed
+pnpm edge
+pnpm dev
+pnpm check
+```
+
+`pnpm doctor` is pnpm's own command and does not run this project's checks.
+`pnpm run doctor` does.
 
 ## The pages
 
@@ -126,3 +174,19 @@ grouped underneath, and the extensions come after that.
   blockers that stop it working today, and the authentication seam.
 - `/manual` in the running app — the same thing written for whoever lives in
   the house rather than whoever changes the code.
+
+## License
+
+Source-available under the [Functional Source License 1.1](LICENSE) (**FSL-1.1-ALv2**, [Fair Source](https://fair.io/)).
+
+| Use | |
+| --- | --- |
+| Self-host for personal or internal use | Allowed — free |
+| Commercial hosting or competing product | [Commercial terms](docs/licensing.md) |
+| Each release, after two years | Becomes [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) |
+
+FSL is not OSI open source; prefer **source-available** or **Fair Source** when that distinction matters.
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and [SECURITY.md](SECURITY.md) for how to participate and report issues safely.
