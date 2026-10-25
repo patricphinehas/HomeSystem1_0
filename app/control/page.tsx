@@ -3,11 +3,13 @@
 import { useState } from "react";
 import Link from "next/link";
 import { lowStock } from "@/lib/inventory";
+import { KINDS, describeState, stateSummary } from "@/lib/devices";
 import type { StoredBill } from "@/lib/bill";
 import type { SubscriptionsDoc } from "@/lib/subscriptions";
 import { inr } from "@/lib/money";
 import { useInventory } from "../use-inventory";
 import { useJson } from "../use-api";
+import { useDevices, useHomeState } from "../use-devices";
 import { BillDetail } from "../bill-detail";
 import { Card } from "../ui";
 import { PageGrid, PageHeader } from "../page-frame";
@@ -29,9 +31,16 @@ export default function HomeControlPage() {
   const bills = useJson<{ bills: StoredBill[] }>("/api/bills?limit=6");
   const subs = useJson<SubscriptionsDoc>("/api/subscriptions");
   const settings = useJson<Health>("/api/settings");
+  const { doc: registry } = useDevices();
+  // Slower than the smart-home page's five seconds: this is a summary card on a
+  // page somebody leaves open, not the screen they adjust a room from.
+  const { home } = useHomeState(15_000);
   const [openBill, setOpenBill] = useState<StoredBill | null>(null);
 
   const low = inv ? lowStock(inv) : null;
+  const devices = registry?.devices ?? [];
+  const house = stateSummary(devices, home?.states ?? {});
+  const controllersDown = (home?.controllers ?? []).filter((c) => !c.ok);
   const db = settings.data?.database;
   const api = settings.loading ? "checking" : settings.data ? "up" : settings.error ? "down" : "checking";
 
@@ -42,7 +51,7 @@ export default function HomeControlPage() {
         hint="Household activity, and what this app can see of the machine it runs on."
       />
 
-      <Card dense title="This machine" subtitle="No device API is connected. These are the checks the app can make.">
+      <Card dense title="This machine" subtitle="What the app can check about the box it runs on. Devices are on Smart home.">
         <dl className="grid gap-3 text-sm">
           <div>
             <dt className="text-xs text-muted">Data API</dt>
@@ -109,8 +118,71 @@ export default function HomeControlPage() {
         <ul className="grid gap-2 text-sm">
           <li>NAS shares and disk volumes — no share, no mount, and no free-space figure.</li>
           <li>Power, reboot, and service switches — this page cannot start or stop the machine.</li>
-          <li>Other home devices — nothing is paired.</li>
+          <li>Anything not behind an edge controller — a device no controller owns cannot be reached.</li>
         </ul>
+      </Card>
+
+      <Card
+        dense
+        title="Smart home"
+        subtitle={
+          registry
+            ? devices.length
+              ? `${house.on} on · ${house.online}/${house.total} answering`
+              : "Nothing paired yet"
+            : "Loading…"
+        }
+        aside={
+          <Link href="/devices" className={action}>
+            Open smart home
+          </Link>
+        }
+      >
+        {!registry ? (
+          <Pending />
+        ) : devices.length === 0 ? (
+          <p className="py-6 text-center text-xs text-muted">
+            No devices. Add an edge controller on Smart home and the house shows up here.
+          </p>
+        ) : (
+          <>
+            <ul className="divide-y divide-border">
+              {devices.slice(0, 6).map((device) => {
+                const state = home?.states[device.id];
+                const unit = KINDS[device.kind].unit;
+                return (
+                  <li key={device.id} className="flex items-baseline justify-between gap-2 py-2 text-sm">
+                    <span className="min-w-0 truncate">
+                      {device.name || "Unnamed device"}
+                      <span className="ml-2 text-xs text-muted">{device.room || "no room"}</span>
+                    </span>
+                    <span className="shrink-0 text-right">
+                      {state?.online && state.value !== null && (
+                        <span className="font-mono text-xs tabular-nums">
+                          {state.value}
+                          {unit}
+                        </span>
+                      )}
+                      <span
+                        className={`ml-2 text-xs ${
+                          !state?.online ? "text-warn" : state.power ? "text-accent" : "text-muted"
+                        }`}
+                      >
+                        {describeState(device, state)}
+                      </span>
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+            {devices.length > 6 && <p className="mt-2 text-xs text-muted">{devices.length - 6} more on Smart home.</p>}
+            {controllersDown.length > 0 && (
+              <p className="mt-2 text-xs text-warn">
+                {controllersDown.map((c) => c.name).join(", ")} not answering — everything on it reads as offline.
+              </p>
+            )}
+          </>
+        )}
       </Card>
 
       <Card

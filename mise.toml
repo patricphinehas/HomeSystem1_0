@@ -44,6 +44,10 @@ run = "node --env-file-if-exists=.env scripts/seed.mjs"
 description = "Run the pages on :3000 and the data API on :4000"
 run = "node scripts/dev.mjs"
 
+[tasks.edge]
+description = "Run the edge-controller simulator on :8099, so /devices has something to talk to"
+run = "node --env-file-if-exists=.env scripts/edge-sim.mjs"
+
 [tasks.check]
 description = "Run the test suite"
 run = "node --test \"lib/*.test.ts\""

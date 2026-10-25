@@ -157,3 +157,49 @@ alter table chats enable row level security;
 -- rows become a free monthly subscription, which is what the drivers assume.
 alter table subscriptions add column if not exists cost  numeric(12, 2) not null default 0 check (cost >= 0);
 alter table subscriptions add column if not exists cycle text not null default 'monthly';
+
+-- Smart home. Two tables: the edge controllers on the network, and the devices
+-- each one owns. A device's `controller_id` cascades, because a device whose
+-- controller is gone is unreachable in a way no page could explain.
+--
+-- No token column anywhere: `token_env` names the .env key the API reads at
+-- request time, so the secret stays beside the database password and out of
+-- every backup of this table.
+create table if not exists controllers (
+  id        text primary key,
+  name      text not null default '',
+  url       text not null default '',
+  token_env text not null default 'EDGE_TOKEN',
+  notes     text not null default '',
+  position  integer not null default 0
+);
+
+alter table controllers enable row level security;
+
+create table if not exists devices (
+  id            text primary key,
+  name          text not null default '',
+  kind          text not null default 'switch',
+  room          text not null default '',
+  controller_id text references controllers (id) on delete cascade,
+  -- How the controller names it: a topic, an entity id, a relay number. One
+  -- device per address per controller, enforced below.
+  address       text not null default '',
+  min_setpoint  numeric,
+  max_setpoint  numeric,
+  modes         text[] not null default '{}',
+  read_only     boolean not null default false,
+  position      integer not null default 0
+);
+
+-- Looked up by controller when a reading is matched to a device. Deliberately
+-- NOT unique: one address per controller is a real rule, but it is enforced by
+-- `normalizeDevices` (as the family's unique names are), because a partial
+-- unique index cannot be deferred and swapping two devices' addresses inside
+-- one transaction would then fail halfway through. The Mongo driver has the
+-- same plain index, so both databases behave the same way.
+create index if not exists devices_address_idx on devices (controller_id, address);
+
+create index if not exists devices_room_idx on devices (room, position);
+
+alter table devices enable row level security;

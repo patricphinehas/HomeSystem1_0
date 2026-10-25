@@ -11,6 +11,8 @@ import type { Category, Inventory, Item } from "../lib/inventory.ts";
 import type { Subscription, SubscriptionsDoc } from "../lib/subscriptions.ts";
 import { fromStored } from "../lib/calendar.ts";
 import type { CalendarDoc } from "../lib/calendar.ts";
+import { normalizeDevices } from "../lib/devices.ts";
+import type { DevicesDoc } from "../lib/devices.ts";
 import type { FamilyDoc } from "../lib/family.ts";
 import type { ChatDay, LoggedMessage } from "../lib/chat-log.ts";
 import type { Line } from "../lib/analytics.ts";
@@ -271,6 +273,114 @@ export async function writeFamily(doc: FamilyDoc): Promise<void> {
   });
 }
 
+/* ---------------- smart home ---------------- */
+
+type ControllerRow = { id: string; name: string; url: string; token_env: string; notes: string };
+
+type DeviceRow = {
+  id: string;
+  name: string;
+  kind: string;
+  room: string;
+  controller_id: string | null;
+  address: string;
+  min_setpoint: string | null;
+  max_setpoint: string | null;
+  modes: string[];
+  read_only: boolean;
+};
+
+/**
+ * Both tables in one read, because the registry is only ever useful whole: a
+ * device without its controller's address cannot be reached, and the validator
+ * refuses the pair separately anyway.
+ */
+export async function readDevices(): Promise<DevicesDoc> {
+  const [controllers, devices] = await Promise.all([
+    sql()<ControllerRow[]>`select id, name, url, token_env, notes from controllers order by position, id`,
+    sql()<DeviceRow[]>`
+      select id, name, kind, room, controller_id, address, min_setpoint, max_setpoint, modes, read_only
+      from devices order by position, id
+    `,
+  ]);
+  // Through the app's own validator, so a row written by hand or by an older
+  // version still arrives with every key the pages expect — the same rule as
+  // `fromStored` for calendar events.
+  const result = normalizeDevices({
+    controllers: controllers.map((r) => ({ ...r, tokenEnv: r.token_env })),
+    devices: devices.map((r) => ({
+      ...r,
+      controller: r.controller_id ?? "",
+      minSetpoint: r.min_setpoint === null ? null : Number(r.min_setpoint),
+      maxSetpoint: r.max_setpoint === null ? null : Number(r.max_setpoint),
+      readOnly: r.read_only,
+    })),
+  });
+  // A stored row the validator refuses would make the page unusable with no
+  // way to fix it, so the registry comes back empty-handed and says why.
+  if ("error" in result) throw new Error(`The stored devices are not readable: ${result.error}`);
+  return result.doc;
+}
+
+export async function writeDevices(doc: DevicesDoc): Promise<void> {
+  await sql().begin(async (tx) => {
+    const controllerIds = doc.controllers.map((c) => c.id);
+    for (const [position, controller] of doc.controllers.entries()) {
+      await tx`
+        insert into controllers ${tx({
+          id: controller.id,
+          name: controller.name,
+          url: controller.url,
+          token_env: controller.tokenEnv,
+          notes: controller.notes,
+          position,
+        })}
+        on conflict (id) do update set
+          name = excluded.name,
+          url = excluded.url,
+          token_env = excluded.token_env,
+          notes = excluded.notes,
+          position = excluded.position
+      `;
+    }
+
+    const deviceIds = doc.devices.map((d) => d.id);
+    for (const [position, device] of doc.devices.entries()) {
+      await tx`
+        insert into devices ${tx({
+          id: device.id,
+          name: device.name,
+          kind: device.kind,
+          room: device.room,
+          controller_id: device.controller || null,
+          address: device.address,
+          min_setpoint: device.minSetpoint,
+          max_setpoint: device.maxSetpoint,
+          modes: device.modes,
+          read_only: device.readOnly,
+          position,
+        })}
+        on conflict (id) do update set
+          name = excluded.name,
+          kind = excluded.kind,
+          room = excluded.room,
+          controller_id = excluded.controller_id,
+          address = excluded.address,
+          min_setpoint = excluded.min_setpoint,
+          max_setpoint = excluded.max_setpoint,
+          modes = excluded.modes,
+          read_only = excluded.read_only,
+          position = excluded.position
+      `;
+    }
+
+    // Devices first: dropping a controller cascades, and deleting the devices
+    // that are staying would be a surprise.
+    await tx`delete from devices ${deviceIds.length ? tx`where id <> all(${deviceIds})` : tx``}`;
+    await tx`delete from controllers ${controllerIds.length ? tx`where id <> all(${controllerIds})` : tx``}`;
+  });
+}
+
 /* ---------------- calendar ---------------- */
 
 /**
@@ -486,7 +596,7 @@ export async function readBills(limit: number): Promise<StoredBill[]> {
 /** Empties every table. Used only by `seed --clear`. */
 export async function clear(): Promise<void> {
   // bill_items and items go with their parents through the cascade.
-  await sql()`truncate bills, categories, subscriptions, events, family, chats cascade`;
+  await sql()`truncate bills, categories, subscriptions, events, family, chats, devices, controllers cascade`;
 }
 
 export async function counts(): Promise<{ categories: number; items: number; bills: number }> {

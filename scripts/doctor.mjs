@@ -1,7 +1,7 @@
 /**
  * Checks everything the app needs before it will run: the toolchain, the
- * dependencies, a reachable database, whether it has been seeded, and whether
- * the two ports are free.
+ * dependencies, a reachable database, whether it has been seeded, whether every
+ * configured edge controller answers, and whether the two ports are free.
  *
  *   mise run doctor   (or: node scripts/doctor.mjs)
  *
@@ -12,7 +12,8 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { close, counts, describeTarget, serverInfo } from "../server/db.ts";
+import { close, counts, describeTarget, readDevices, serverInfo } from "../server/db.ts";
+import { checkController } from "../server/edge.ts";
 import { isDbChoice, selectedDb } from "../server/db-select.ts";
 
 const API_PORT = Number(process.env.API_PORT ?? 4000);
@@ -87,7 +88,7 @@ if (!isDbChoice(chosen)) {
     "fail",
     "DB_SELECT",
     chosen ? `"${chosen}"` : "not set",
-    'Set DB_SELECT to supabase or mongodb in .env.',
+    'Set DB_SELECT to supabase, mongodb or sqlite in .env.',
   );
 } else if (chosen === "supabase" && !process.env.DATABASE_URL) {
   add(
@@ -97,7 +98,7 @@ if (!isDbChoice(chosen)) {
     "Supabase dashboard → Project Settings → Database → Connection string → URI, then paste it into .env.",
   );
 } else {
-  const label = chosen === "supabase" ? "Supabase" : "MongoDB";
+  const label = chosen === "supabase" ? "Supabase" : chosen === "mongodb" ? "MongoDB" : "SQLite";
   try {
     const version = await serverInfo();
     add("ok", label, `${describeTarget()} · ${version}`);
@@ -111,6 +112,34 @@ if (!isDbChoice(chosen)) {
       e.code === "42P01"
         ? add("fail", "Schema", "tables are missing", "Run `mise run migrate` to apply supabase/schema.sql.")
         : add("fail", "Schema", e.message.split("\n")[0]);
+    }
+    // Edge controllers, while the connection is open. One that is off is a
+    // warning and not a failure: nothing else in the app needs it, and "the Pi
+    // is unplugged" is exactly what this check exists to tell you.
+    try {
+      const { controllers, devices } = await readDevices();
+      if (!controllers.length) {
+        add("ok", "Devices", "no edge controller configured");
+      } else {
+        const checks = await Promise.all(controllers.map((controller) => checkController(controller)));
+        for (const [i, check] of checks.entries()) {
+          const controller = controllers[i];
+          const owns = devices.filter((d) => d.controller === controller.id).length;
+          const name = controller.name || controller.id;
+          const plural = owns === 1 ? "" : "s";
+          check.ok
+            ? add("ok", name, `${check.target} answered in ${check.ms}ms · ${owns} device${plural}`)
+            : add(
+                "warn",
+                name,
+                `${check.target} did not answer`,
+                `${check.error} Smart home will show its ${owns} device${plural} as offline. ` +
+                  "`mise run edge` runs a simulated controller to try the page against.",
+              );
+        }
+      }
+    } catch (e) {
+      add("warn", "Devices", "could not be read", e.message.split("\n")[0]);
     }
   } catch (e) {
     add("fail", label, `cannot reach ${describeTarget()}`, e.message.split("\n")[0]);

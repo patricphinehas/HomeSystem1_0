@@ -1,11 +1,13 @@
 /**
  * Prepares whichever database DB_SELECT names: supabase/schema.sql on Postgres,
- * indexes on MongoDB.
+ * sqlite/schema.sql on SQLite, indexes on MongoDB.
  *
  *   mise run migrate
  *
- * The file is written with `create table if not exists`, so running it twice is
- * harmless and it doubles as the "is this project set up yet" command.
+ * Both schema files are written with `create table if not exists`, so running
+ * this twice is harmless and it doubles as the "is this project set up yet"
+ * command. On SQLite it also creates the file and its directory, which is why
+ * nothing has to exist beforehand.
  */
 
 import { applySchema, close, counts, describeTarget } from "../server/db.ts";

@@ -17,6 +17,8 @@ import { fromStored } from "../lib/calendar.ts";
 import type { FamilyDoc, Person } from "../lib/family.ts";
 import type { ChatDay, LoggedMessage } from "../lib/chat-log.ts";
 import type { CalEvent, CalendarDoc } from "../lib/calendar.ts";
+import { normalizeDevices } from "../lib/devices.ts";
+import type { Controller, Device, DevicesDoc } from "../lib/devices.ts";
 import type { Line } from "../lib/analytics.ts";
 
 const URI = process.env.MONGODB_URI ?? "mongodb://127.0.0.1:27017";
@@ -29,6 +31,8 @@ type FamilyDoc_ = Omit<Person, "id"> & { _id: string; order: number };
 /** `_id` is the day, so an append is an upsert and there is nothing to index. */
 type ChatDoc = { _id: string; messages: LoggedMessage[] };
 type EventDoc = Omit<CalEvent, "id"> & { _id: string; /** Replaced by `people`; still read for old documents. */ who?: string };
+type ControllerDoc = Omit<Controller, "id"> & { _id: string; order: number };
+type DeviceDoc = Omit<Device, "id"> & { _id: string; order: number };
 
 let client: MongoClient | null = null;
 let connecting: Promise<Db> | null = null;
@@ -46,6 +50,8 @@ function connect(): Promise<Db> {
         await db.collection("subscriptions").createIndexes([{ key: { order: 1 } }]);
         await db.collection("events").createIndexes([{ key: { date: 1, time: 1 } }]);
         await db.collection("family").createIndexes([{ key: { order: 1 } }]);
+        await db.collection("controllers").createIndexes([{ key: { order: 1 } }]);
+        await db.collection("devices").createIndexes([{ key: { order: 1 } }, { key: { controller: 1, address: 1 } }]);
         return db;
       })
       .catch((e) => {
@@ -64,6 +70,9 @@ const subscriptions = async (): Promise<Collection<SubscriptionDoc>> =>
 const events = async (): Promise<Collection<EventDoc>> => (await connect()).collection<EventDoc>("events");
 const family = async (): Promise<Collection<FamilyDoc_>> => (await connect()).collection<FamilyDoc_>("family");
 const chats = async (): Promise<Collection<ChatDoc>> => (await connect()).collection<ChatDoc>("chats");
+const controllers = async (): Promise<Collection<ControllerDoc>> =>
+  (await connect()).collection<ControllerDoc>("controllers");
+const devices = async (): Promise<Collection<DeviceDoc>> => (await connect()).collection<DeviceDoc>("devices");
 
 /** Reported by the API and by `doctor`, with any credentials left out. */
 export const describeTarget = () => {
@@ -197,6 +206,55 @@ export async function writeFamily(doc: FamilyDoc): Promise<void> {
   );
 }
 
+/* ---------------- smart home ---------------- */
+
+/**
+ * The registry whole, both collections at once: a device without its
+ * controller's address cannot be reached, so there is never a reason to read
+ * one without the other.
+ */
+export async function readDevices(): Promise<DevicesDoc> {
+  const [controllerDocs, deviceDocs] = await Promise.all([
+    (await controllers()).find({}, { sort: { order: 1 } }).toArray(),
+    (await devices()).find({}, { sort: { order: 1 } }).toArray(),
+  ]);
+  // Through the app's own validator, so a document written by hand or by an
+  // older version still arrives with every key — the same rule as `fromStored`.
+  const result = normalizeDevices({
+    controllers: controllerDocs.map(({ _id, order: _order, ...rest }) => ({ ...rest, id: _id })),
+    devices: deviceDocs.map(({ _id, order: _order, ...rest }) => ({ ...rest, id: _id })),
+  });
+  if ("error" in result) throw new Error(`The stored devices are not readable: ${result.error}`);
+  return result.doc;
+}
+
+export async function writeDevices(doc: DevicesDoc): Promise<void> {
+  const keepControllers = doc.controllers.map((c) => c.id);
+  const keepDevices = doc.devices.map((d) => d.id);
+
+  await (await controllers()).bulkWrite(
+    [
+      ...doc.controllers.map(({ id, ...rest }, order) => ({
+        replaceOne: { filter: { _id: id }, replacement: { _id: id, ...rest, order }, upsert: true },
+      })),
+      { deleteMany: { filter: { _id: { $nin: keepControllers } } } },
+    ],
+    { ordered: true },
+  );
+
+  await (await devices()).bulkWrite(
+    [
+      ...doc.devices.map(({ id, ...rest }, order) => ({
+        replaceOne: { filter: { _id: id }, replacement: { _id: id, ...rest, order }, upsert: true },
+      })),
+      { deleteMany: { filter: { _id: { $nin: keepDevices } } } },
+    ],
+    { ordered: true },
+  );
+}
+
+/* ---------------- calendar ---------------- */
+
 /**
  * Every document goes out through `fromStored`, so one written before a field
  * existed still arrives with every key the app expects.
@@ -265,6 +323,8 @@ export async function clear(): Promise<void> {
     (await events()).deleteMany({}),
     (await family()).deleteMany({}),
     (await chats()).deleteMany({}),
+    (await controllers()).deleteMany({}),
+    (await devices()).deleteMany({}),
   ]);
 }
 

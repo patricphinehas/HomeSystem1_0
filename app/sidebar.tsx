@@ -7,6 +7,7 @@ import { useHousehold } from "./use-household";
 import {
   BookOpen,
   CalendarBlank,
+  CaretRight,
   ChartLine,
   Gear,
   HardDrives,
@@ -16,28 +17,65 @@ import {
   Plugs,
   Receipt,
   Repeat,
+  Thermometer,
   SignOut,
   X,
 } from "@phosphor-icons/react";
 
-const links = [
+type Entry = { href: string; label: string; icon: typeof House };
+type Group = { group: string; hint: string; items: Entry[] };
+type Row = Entry | Group;
+
+const isGroup = (row: Row): row is Group => "group" in row;
+
+/**
+ * The order is the argument the app makes for itself.
+ *
+ * Overview and **Analytics** are at the top level, because the household's own
+ * inflation rate — what *your* basket did, next to what the official figure
+ * says — is the thing this app exists to work out, and it should never be two
+ * clicks away. Everything that feeds it is grouped under it. The smart home
+ * and the machine checks are an extension (useful, not the point), and the
+ * inference engine is a way of asking the same data questions, so both are
+ * groups rather than top-level claims on attention.
+ */
+const nav: Row[] = [
   { href: "/", label: "Overview", icon: House },
-  { href: "/control", label: "Home control", icon: HardDrives },
-  { href: "/inventory", label: "Inventory management", icon: Package },
-  { href: "/subscriptions", label: "Subscriptions", icon: Repeat },
-  { href: "/calendar", label: "Calendar", icon: CalendarBlank },
-  { href: "/upload", label: "Enter bill", icon: Receipt },
   { href: "/analytics", label: "Analytics", icon: ChartLine },
-  { href: "/mcp", label: "MCP tools", icon: Plugs },
-  { href: "/manual", label: "User manual", icon: BookOpen },
+  {
+    group: "Groceries & expenses",
+    hint: "What the house buys, and what it costs",
+    items: [
+      { href: "/inventory", label: "Inventory management", icon: Package },
+      { href: "/upload", label: "Enter bill", icon: Receipt },
+      { href: "/subscriptions", label: "Subscriptions", icon: Repeat },
+    ],
+  },
+  {
+    group: "Automations & monitoring",
+    hint: "The house itself, and this machine",
+    items: [
+      { href: "/devices", label: "Smart home", icon: Thermometer },
+      { href: "/control", label: "Home control", icon: HardDrives },
+    ],
+  },
+  { href: "/calendar", label: "Calendar", icon: CalendarBlank },
+  {
+    group: "Inference engine",
+    hint: "Ask the household data a question",
+    items: [{ href: "/mcp", label: "MCP tools & chat", icon: Plugs }],
+  },
   { href: "/settings", label: "Settings", icon: Gear },
+  { href: "/manual", label: "User manual", icon: BookOpen },
 ];
+
+const everyEntry = nav.flatMap((row) => (isGroup(row) ? row.items : [row]));
 
 export function Sidebar() {
   const path = usePathname();
   const [open, setOpen] = useState(false);
   const user = useHousehold();
-  const current = links.find((link) => link.href === path)?.label ?? "Home System";
+  const current = everyEntry.find((entry) => entry.href === path)?.label ?? "Home System";
 
   useEffect(() => {
     setOpen(false);
@@ -77,11 +115,7 @@ export function Sidebar() {
             aria-label="Main"
             className="max-h-[70vh] overflow-y-auto border-b border-border bg-surface px-2 py-2"
           >
-            <div className="grid gap-1">
-              {links.map((link) => (
-                <NavLink key={link.href} {...link} path={path} roomy onNavigate={() => setOpen(false)} />
-              ))}
-            </div>
+            <NavRows path={path} roomy onNavigate={() => setOpen(false)} />
             <UserSlot name={user.name} household={user.household} roomy />
           </nav>
         )}
@@ -95,13 +129,74 @@ export function Sidebar() {
           Home System
         </Link>
         <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
-          {links.map((link) => (
-            <NavLink key={link.href} {...link} path={path} />
-          ))}
+          <NavRows path={path} />
         </div>
         <UserSlot name={user.name} household={user.household} />
       </nav>
     </>
+  );
+}
+
+function NavRows({ path, roomy, onNavigate }: { path: string; roomy?: boolean; onNavigate?: () => void }) {
+  return (
+    <div className="grid gap-1">
+      {nav.map((row) =>
+        isGroup(row) ? (
+          <NavGroup key={row.group} {...row} path={path} roomy={roomy} onNavigate={onNavigate} />
+        ) : (
+          <NavLink key={row.href} {...row} path={path} roomy={roomy} onNavigate={onNavigate} />
+        ),
+      )}
+    </div>
+  );
+}
+
+/**
+ * A section of the nav, open or shut. It starts open, and a group holding the
+ * page you are on cannot be shut out from under you — collapsing is for
+ * getting the other sections out of the way, not for hiding where you are.
+ */
+function NavGroup({
+  group,
+  hint,
+  items,
+  path,
+  roomy,
+  onNavigate,
+}: Group & { path: string; roomy?: boolean; onNavigate?: () => void }) {
+  const holdsCurrent = items.some((item) => item.href === path);
+  const [open, setOpen] = useState(true);
+  const shown = open || holdsCurrent;
+  const id = `nav-${group.replace(/\W+/g, "-").toLowerCase()}`;
+
+  return (
+    <div className="grid gap-1">
+      <button
+        type="button"
+        aria-expanded={shown}
+        aria-controls={id}
+        title={hint}
+        onClick={() => setOpen(!shown)}
+        className={`flex shrink-0 items-center gap-1 rounded-lg px-3 text-left text-[11px] font-medium tracking-wide text-muted uppercase transition hover:text-fg ${
+          roomy ? "min-h-9" : "py-1.5"
+        }`}
+      >
+        <CaretRight
+          size={10}
+          weight="bold"
+          className={`shrink-0 transition-transform ${shown ? "rotate-90" : ""}`}
+          aria-hidden
+        />
+        <span className="min-w-0 truncate">{group}</span>
+      </button>
+      {shown && (
+        <div id={id} className="grid gap-1 border-l border-border pl-2 ml-3">
+          {items.map((item) => (
+            <NavLink key={item.href} {...item} path={path} roomy={roomy} onNavigate={onNavigate} />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -112,10 +207,7 @@ function NavLink({
   path,
   roomy,
   onNavigate,
-}: {
-  href: string;
-  label: string;
-  icon: typeof House;
+}: Entry & {
   path: string;
   roomy?: boolean;
   onNavigate?: () => void;
@@ -130,8 +222,8 @@ function NavLink({
         roomy ? "min-h-10" : "py-2"
       } ${active ? "bg-accent-soft font-medium text-accent" : "text-muted hover:bg-bg hover:text-fg"}`}
     >
-      <Icon size={18} />
-      {label}
+      <Icon size={18} className="shrink-0" />
+      <span className="min-w-0 truncate">{label}</span>
     </Link>
   );
 }

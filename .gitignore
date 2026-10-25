@@ -30,6 +30,12 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
+# the SQLite database, when DB_SELECT=sqlite (SQLITE_PATH)
+/data
+*.db
+*.db-wal
+*.db-shm
+
 # env files (can opt-in for committing if needed)
 .env*
 !.env.example

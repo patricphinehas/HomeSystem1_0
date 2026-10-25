@@ -9,7 +9,6 @@ import {
   blankEvent,
   byDate,
   canEdit,
-  daysUntil,
   durationLabel,
   endAfter,
   monthGrid,
@@ -20,6 +19,7 @@ import {
   timeRange,
   todayISO,
   upcoming,
+  whenLabel,
   type CalEvent,
 } from "@/lib/calendar";
 import { useCalendar } from "../use-calendar";
@@ -45,15 +45,6 @@ const dayLabel = (date: string) =>
     month: "long",
     timeZone: "UTC",
   });
-
-/** How far off something is, in the words a person would use. */
-function when(date: string, today: string) {
-  const days = daysUntil(date, today);
-  if (days === 0) return "Today";
-  if (days === 1) return "Tomorrow";
-  if (days < 7) return `in ${days} days`;
-  return `${date.slice(8)}/${date.slice(5, 7)}`;
-}
 
 export default function CalendarPage() {
   const { doc, error, save } = useCalendar();
@@ -245,7 +236,7 @@ export default function CalendarPage() {
                       <span className="flex items-baseline justify-between gap-2">
                         <span className="min-w-0 truncate text-sm">{event.title || "Untitled"}</span>
                         <span className="shrink-0 font-mono text-xs text-muted tabular-nums">
-                          {when(event.date, today)}
+                          {whenLabel(event.date, today)}
                           {event.time && ` ${event.time}`}
                         </span>
                       </span>

@@ -21,11 +21,13 @@ import { allInventoryItems } from "../lib/match-inventory.ts";
 import { isLow, lowStock, newId, totals } from "../lib/inventory.ts";
 import { addPerson, blankEvent, normalizeCalendar, todayISO, upcoming } from "../lib/calendar.ts";
 import { familyNames } from "../lib/family.ts";
+import { KINDS, describeState, planCommand, stateSummary } from "../lib/devices.ts";
 import type { Item } from "../lib/inventory.ts";
 import {
   insertBills,
   readBills,
   readCalendar,
+  readDevices,
   readFamily,
   readInventory,
   readLines,
@@ -33,6 +35,7 @@ import {
   writeCalendar,
   writeInventory,
 } from "./db.ts";
+import { readHomeState, sendCommand } from "./edge.ts";
 
 export const PROTOCOL_VERSION = "2025-06-18";
 
@@ -289,6 +292,109 @@ export const TOOLS: Tool[] = [
       if ("error" in result) throw new Error(result.error);
       await writeCalendar(result.doc);
       return { added: result.doc.events.find((e) => e.id === event.id), total: result.doc.events.length };
+    },
+  },
+  {
+    name: "list_devices",
+    description:
+      "Every device the house can monitor or control, with its room, what it is, and what it will take an instruction about. Readings are live, through the edge controllers.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        room: { type: "string", description: "Only devices in this room." },
+        kind: {
+          type: "string",
+          description: "Only devices of this kind.",
+          enum: Object.keys(KINDS),
+        },
+      },
+    },
+    run: async (args) => {
+      const room = str(args, "room").toLowerCase();
+      const kind = str(args, "kind").toLowerCase();
+      const registry = await readDevices();
+      const home = await readHomeState(registry);
+      const devices = registry.devices
+        .filter((d) => !room || d.room.toLowerCase() === room)
+        .filter((d) => !kind || d.kind === kind)
+        .map((device) => {
+          const state = home.states[device.id];
+          return {
+            id: device.id,
+            name: device.name,
+            kind: device.kind,
+            room: device.room,
+            controls: device.readOnly ? [] : KINDS[device.kind].controls,
+            readOnly: device.readOnly,
+            online: state?.online ?? false,
+            power: state?.power ?? null,
+            reading: state?.value ?? null,
+            unit: KINDS[device.kind].unit,
+            setpoint: state?.setpoint ?? null,
+            mode: state?.mode || null,
+            fan: state?.fan || null,
+            watts: state?.watts ?? null,
+            says: describeState(device, state),
+          };
+        });
+      return {
+        summary: stateSummary(registry.devices, home.states),
+        controllers: home.controllers.map((c) => ({ name: c.name, ok: c.ok, error: c.error ?? null })),
+        devices,
+        at: home.at,
+      };
+    },
+  },
+  {
+    name: "set_device",
+    description:
+      "Switch a device on or off, or set its target temperature, mode or fan speed. Matches on the device name, case-insensitively. A device set to monitor only is refused, and a target outside what the unit allows is brought back to its nearest limit.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        device: { type: "string", description: "The device name, as list_devices gives it." },
+        power: { type: "boolean", description: "true to switch it on, false to switch it off." },
+        setpoint: { type: "number", description: "Target temperature, in the device's own unit." },
+        mode: { type: "string", description: "cool, dry, fan, heat, auto — whatever that unit has." },
+        fan: { type: "string", description: "auto, low, medium, high." },
+      },
+      required: ["device"],
+    },
+    run: async (args) => {
+      const wanted = str(args, "device").toLowerCase();
+      if (!wanted) throw new Error("device is required.");
+
+      const registry = await readDevices();
+      const device = registry.devices.find((d) => d.name.toLowerCase() === wanted);
+      if (!device) {
+        const near = registry.devices.filter((d) => d.name.toLowerCase().includes(wanted)).map((d) => d.name);
+        throw new Error(
+          near.length ? `No device called "${wanted}". Did you mean: ${near.join(", ")}?` : `No device called "${wanted}".`,
+        );
+      }
+
+      const controller = registry.controllers.find((c) => c.id === device.controller);
+      if (!controller) throw new Error(`${device.name} has no controller, so nothing can reach it.`);
+
+      // The same gate the page and the API use, so a model cannot ask for
+      // something the hardware was never configured to accept.
+      const plan = planCommand(device, {
+        power: typeof args.power === "boolean" ? args.power : undefined,
+        setpoint: args.setpoint === undefined ? undefined : Number(args.setpoint),
+        mode: args.mode === undefined ? undefined : str(args, "mode"),
+        fan: args.fan === undefined ? undefined : str(args, "fan"),
+      });
+      if ("error" in plan) throw new Error(plan.error);
+
+      const sent = await sendCommand(controller, device, plan.command);
+      if (!sent.ok) throw new Error(sent.error);
+      return {
+        device: device.name,
+        sent: plan.command,
+        clamped: plan.clamped,
+        state: sent.state,
+        says: sent.state ? describeState(device, sent.state) : "The controller did not report back.",
+      };
     },
   },
 ];

@@ -1,12 +1,49 @@
 # Deployment architecture
 
 Target: **pages on GitHub Pages, API on Render, data in MongoDB Atlas**, deployed
-by hand. This file is the plan plus the list of things that stop it working
-today. Written 2026-10-18 as an audit and a target; none of the blockers below
-have been changed in the code. The calendar section at the end was a sketch then
-and is built now (2026-10-19) — it is described as it stands.
+by hand. This file is the plan, plus the list of things that stop it working
+today.
 
-For how the app works internally, see [`README.md`](README.md).
+## Rules and conditions
+
+**Status.** Written 2026-10-18 as an audit and a target, and extended on
+2026-10-26 when `/devices` added a blocker of its own. **None of the blockers
+below have been changed in the code**, so nothing here describes a deployment
+that exists. The app runs on a home network, and that is the only arrangement
+it has ever run in.
+
+**Conditions any deployment has to satisfy.** They are not negotiable in the
+order they are written, and the first one is the whole reason this file is
+cautious:
+
+1. **Nothing is authenticated.** Not the pages, not `PUT /api/settings`, not
+   `POST /api/mcp`, not `POST /api/chat`. A public URL in front of this app is
+   a stranger's write access to the household data and a stranger's spend on
+   your model credits. Either authentication lands first (the seam is designed
+   at the end of this file) or the write routes are disabled before the API is
+   reachable.
+2. **No secret reaches the browser, ever.** `GET /api/settings` answers
+   `set: true` and never a value; `externalServers()` strips the query string
+   off `.mcp.json` URLs; a database error names the host and never the
+   password. Any host that changes this is the wrong host.
+3. **`NEXT_PUBLIC_*` is public by definition.** The API URL belongs there.
+   Nothing else does.
+4. **A device is only reachable from inside the house.** `server/edge.ts` calls
+   a private LAN address, so the API has to run somewhere that can route to it
+   — see blocker 7. No cloud host satisfies this without a tunnel or a reversed
+   direction.
+5. **Reversibility.** Every step in **Manual deploy order** is a dashboard
+   setting or an env var, and the one-way doors are called out where they are.
+   The database is the only copy of the data: back it up before pointing a new
+   deployment at it.
+
+**Rules for changing this file.** It is an audit, so it only ever says what was
+run. A blocker leaves this list when the code changes, not when a fix is
+described, and a blocker that was verified says how. If the topology changes,
+the whole topology changes: there is one target in here, not a menu.
+
+For how the app works internally, the rules a change has to respect, and the
+development log, see [`README.md`](README.md).
 
 ## Target topology
 
@@ -55,24 +92,26 @@ mount, so in practice nothing on screen changes.
 
 ### 2. `rewrites` do not exist in a static export
 
-`next.config.ts` rewrites eight `/api/*` paths to the Express origin. Next's own
-docs list Rewrites under **Unsupported Features** for `output: "export"`, and
-there is no server on Pages to run them. Silently, every `/api/*` call becomes a
-request to `<user>.github.io/api/...` and returns the Pages 404.
+`next.config.ts` rewrites fourteen `/api/*` paths to the Express origin. Next's
+own docs list Rewrites under **Unsupported Features** for `output: "export"`,
+and there is no server on Pages to run them. Silently, every `/api/*` call
+becomes a request to `<user>.github.io/api/...` and returns the Pages 404.
 
-The eight rewrites get deleted and replaced by an absolute API base URL baked in
-at build time (`NEXT_PUBLIC_API_URL`). That touches 8 files holding 13 hardcoded
-`fetch("/api/...")` calls:
+The rewrites get deleted and replaced by an absolute API base URL baked in at
+build time (`NEXT_PUBLIC_API_URL`). Recounted 2026-10-26: that is **30
+hardcoded `/api/...` paths across 15 files**, and it grows with every feature —
 
 ```
-app/mcp/chat.tsx      app/mcp/page.tsx      app/settings/page.tsx
-app/sidebar.tsx       app/upload/page.tsx   app/use-inventory.ts
-app/use-subscriptions.ts                    app/use-calendar.ts
+app/analytics/page.tsx   app/control/page.tsx     app/devices/page.tsx
+app/inventory/page.tsx   app/mcp/chat.tsx         app/mcp/page.tsx
+app/settings/page.tsx    app/upload/page.tsx      app/use-calendar.ts
+app/use-devices.ts       app/use-family.ts        app/use-household.ts
+app/use-inventory.ts     app/use-region.ts        app/use-subscriptions.ts
 ```
 
-Worth routing all of them through one helper (`app/use-api.ts` already exists and
-is the natural home) rather than editing eleven call sites and then forgetting
-the twelfth.
+which is the argument for routing all of them through one helper
+(`app/use-api.ts` already exists and is the natural home) rather than editing
+thirty call sites and then forgetting the thirty-first.
 
 ### 3. No CORS on the API
 
@@ -104,9 +143,13 @@ through Node's own type stripping, no build step).
 
 This is the one that matters. On a public Render URL, with no auth:
 
-- `POST /api/mcp` exposes `set_quantity`, `add_bill` and `add_event` — anyone can
-  write to the household data, and there is no route to delete a bill again.
-- `PUT /api/calendar` replaces the whole family calendar.
+- `POST /api/mcp` exposes `set_quantity`, `add_bill`, `add_event` and
+  `set_device` — anyone can write to the household data, and there is no route
+  to delete a bill again. `set_device` is the one that reaches past the data:
+  it switches a geyser on.
+- `PUT /api/calendar` replaces the whole family calendar, and
+  `PUT /api/devices` the device registry — a controller address is a URL the
+  API will then call.
 - `PUT /api/settings` lets anyone rewrite `DB_SELECT`, `MONGODB_URI` and
   `DATABASE_URL`, i.e. repoint the running app at a database they control.
 - `POST /api/chat` is an open proxy to whatever model is configured. With
@@ -130,6 +173,38 @@ dashboard, or keep the writable settings in Mongo instead of `.env` — but the
 database connection string itself can never live in the database, so that part
 stays dashboard-only regardless.
 
+### 7. The smart home cannot work from a cloud API
+
+Added 2026-10-26, with `/devices`. This one is not a bug to fix in the code; it
+is a property of the topology, and it is the first blocker on this list that the
+app is right about and the deployment is wrong about.
+
+An edge controller lives on the household's LAN at something like
+`http://192.168.1.50:8080`. `server/edge.ts` calls it from wherever the API
+runs. On Render that is a datacentre with no route to a private address, so
+every controller reads as "cannot be reached from this machine" and nothing on
+the page works — correctly, and with the right message, but uselessly.
+
+Three ways out, in increasing order of how much they cost:
+
+1. **Run the API at home** and the pages wherever. The API is one Node process
+   that already has to reach the LAN; this is the arrangement the app assumes,
+   and `/devices` is the part of it that genuinely requires it. The cost is a
+   machine at home that stays on, and a way in for the browser if the pages are
+   hosted elsewhere.
+2. **Reverse the direction.** The controller polls the API for pending commands
+   instead of being called. That works through any NAT with no inbound rule,
+   needs a queue table and an idempotency key per command (two controllers'
+   worth of "did that pump already run?"), and makes every command slower by
+   half a poll interval.
+3. **A tunnel** (Tailscale, Cloudflare Tunnel, WireGuard) from the API host into
+   the home network. Least code, one more service to keep alive, and it puts a
+   route into the house that has to be looked after.
+
+Nothing here is chosen. Until it is, `/devices` is a LAN feature: with the API
+on Render, expect the devices page to be the one thing that does not work, and
+expect it to say so by name.
+
 ## Smaller things, worth fixing while you are in there
 
 - **Atlas IP allowlist.** Render's outbound IPs are not static on the free plan,
@@ -151,8 +226,16 @@ stays dashboard-only regardless.
   instead of values for every secret field; `externalServers()` strips the query
   string off `.mcp.json` URLs, so the Supabase project ref is not published.
   Both still hold after the move — keep them that way.
+- **SQLite is not an option on Render**, and it is worth saying so before
+  somebody tries it: the disk is ephemeral, so `data/homesystem.db` would be
+  silently wiped on every deploy and restart, exactly as `.env` is in blocker
+  6. SQLite is for the arrangement in blocker 7 instead — the API running at
+  home, where it is also the thing that makes that blocker disappear: one
+  process, one file, a LAN route to the controllers and nothing else to keep
+  alive.
 - **Supabase/Postgres stays supported** but goes unused in this topology.
   `DB_SELECT=mongodb` on Render; the Postgres driver costs nothing idle.
+
 
 ## Environment variables, per host
 
@@ -167,6 +250,8 @@ stays dashboard-only regardless.
 | `OPENROUTER_API_KEY` | — | ✅ secret | only if chat is exposed at all |
 | `OPENROUTER_MODEL` | — | optional | |
 | `ALLOWED_ORIGIN` | — | ✅ | the Pages origin, for CORS |
+| `EDGE_TOKEN` | — | ✅ secret | only useful if the API can reach the LAN — see blocker 7 |
+| `EDGE_TIMEOUT_MS` | — | optional | 4000 suits a LAN; raise it through a tunnel |
 
 `NEXT_PUBLIC_*` is compiled into the JavaScript and is public by definition. The
 API URL is fine there. Nothing else is.
@@ -232,69 +317,37 @@ password hashing, reset flows and session invalidation into this repo.
 
 ---
 
-# The shared family calendar
+# Appendix: the calendar as a worked example
 
-Built on 2026-10-19, after this file first sketched it, and widened the same day
-into something you can actually plan a night out with. `/calendar`, an `events`
-collection (Mongo) or table (Postgres), `GET`/`PUT /api/calendar`, and the
-`list_events` / `add_event` MCP tools.
+Built on 2026-10-19, after this file sketched it, and widened the same day into
+something you can plan a night out with. What an entry holds, and why it holds
+nothing more — no recurrence, no invitations, no timezone, no overnight events
+— is in [`README.md`](README.md) (phases 17 and 18) and in `lib/calendar.ts`.
+What belongs here is the part that is about deploying it, because the calendar
+is the feature where every missing piece of authentication is visible at once.
 
-**What an entry holds.** Date, start and end time, the activity it blocks the
-day for, a title, a venue, a link, the people invited, an RSVP from each of
-them, a booking status with the name it is reserved under, notes, and a comment
-thread. One flat shape, not a type per activity: a movie's theatre and ticket
-link are a dinner's restaurant and booking link, so `kind` changes only what the
-dialog calls `venue` and `link`, never what is stored.
-
-What the sketch said to leave out was left out:
-
-- **No recurrence.** One `CalEvent` is one occurrence. "Every second Friday" is
-  RRULE, which is timezones, DST and exceptions to a series, and it is where
-  calendar projects die. `lib/calendar.ts` carries the reason and the upgrade
-  path (take `rrule`, expand on read) in a `ponytail:` comment.
-- **No invitations, no reminders, no notifications.** An RSVP is somebody
-  ticking a box on the page; nothing is sent to anyone.
-- **No timezone.** A date is `yyyy-mm-dd` and a time is `HH:MM`, both read as
-  local. Movie night is at eight o'clock wherever the reader is, not at an
-  instant on a global timeline, so nothing is ever converted. The month grid
-  walks UTC midnights purely as a calendar with no clocks in it, which is what
-  keeps a day exactly 86400000ms across a DST change. Overnight events are
-  refused rather than wrapped — one entry is one date.
-
-**Where authentication would bite.** Three fields are names rather than people,
-and all three are the same missing piece:
+**Three fields are names rather than people**, and all three are the same
+missing piece:
 
 | Field | Today | With a sign-in |
 |---|---|---|
-| `people[]` | names, from `HOUSEHOLD_PEOPLE` in settings or typed | household members |
+| `people[]` | names, from the `family` collection or typed | household members |
 | `rsvp` | keyed by that name; anyone can answer for anyone | keyed by the signed-in user |
 | `comments[].by` | signed with `USER_NAME`, so a signature | an author |
 
 None of that blocks the feature in one trusted house, and none of it survives
-contact with a public URL. The seam is the same one the auth section above
-describes; nothing in `lib/calendar.ts` needs to change, only who the page
-believes you are.
-
-**One thing worth knowing about the link field.** It is coerced to `https://`
-when the scheme is missing and refused unless it is `http(s)`. A `javascript:`
-href in shared, editable data is an attack on whoever opens the entry, and this
-is editable by everyone in the house by design.
-
-**What it did not borrow yet.** The `nextDue` predictions in `lib/analytics.ts`
-are still only on the item report. Surfacing them as read-only entries on the
-month grid — "toor dal likely needed" — is the one thing that makes a calendar
-here better than a calendar anywhere else, and it is the obvious next piece.
-`analyse()` does not return `nextDue` per item today, so it needs either a new
-pure helper over `priceHistory()` or a `/api/analytics` field; not hard, just
-not done.
+contact with a public URL. The seam is the one the authentication section above
+describes: nothing in `lib/calendar.ts` changes, only who the page believes you
+are.
 
 **Deploying it changes nothing above.** `/api/calendar` is one more route behind
-the same three blockers as the rest: it needs the absolute `NEXT_PUBLIC_API_URL`
-(blocker 2), CORS (blocker 3), and it is an unauthenticated write on a public URL
-(blocker 5) — anyone could fill the family calendar with whatever they liked,
-or read where the house will be on Friday night. Add it to the write set that
-gets protected first.
+the same blockers as the rest — the absolute `NEXT_PUBLIC_API_URL` (2), CORS
+(3), and an unauthenticated write on a public URL (5). Anyone could fill the
+family calendar with whatever they liked, or read where the house will be on
+Friday night. It goes in the write set that gets protected first.
 
 **Still worth asking:** if the family already lives in Google Calendar, a link
-out beats maintaining this, and the inventory due-date tie-in above is the only
-real argument against.
+out beats maintaining this. The one real argument against it is the inventory
+tie-in — read-only "toor dal likely needed" entries on the month grid, from the
+`nextDue` predictions `lib/analytics.ts` already computes per item. That is a
+feature idea, so it lives under **Next up** in the development log and not here.

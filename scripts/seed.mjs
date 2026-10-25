@@ -1,20 +1,23 @@
 /**
  * Seeds the database so every page has something to show before you have
  * entered months of real shopping: the starter inventory, demo bills behind the
- * analytics, a few subscriptions, and a calendar with things either side of
- * today.
+ * analytics, a few subscriptions, a calendar with things either side of today,
+ * and a smart home wired to the edge simulator.
  *
  *   node scripts/seed.mjs          seed an empty database (refuses a full one)
  *   node scripts/seed.mjs --clear  wipe the tables first
  *
  * The inventory is real starter data. Everything else is invented and says so:
  * each bill is noted "demo data" and so is every calendar entry, so a seeded
- * database is never mistaken for a used one. Subscriptions, the calendar and
+ * database is never mistaken for a used one. The devices point at
+ * `scripts/edge-sim.mjs` on 127.0.0.1:8099 — they read as offline until
+ * `pnpm edge` is running, which is the truth and not a seeding failure. Subscriptions, the calendar and
  * the inventory are each written whole, replacing whatever was there.
  */
 
 import { normalizeBill } from "../lib/bill.ts";
 import { normalizeCalendar } from "../lib/calendar.ts";
+import { normalizeDevices } from "../lib/devices.ts";
 import { normalizeFamily } from "../lib/family.ts";
 import { normalizeInventory } from "../lib/inventory.ts";
 import { normalizeSubscriptions } from "../lib/subscriptions.ts";
@@ -25,6 +28,7 @@ import {
   counts,
   insertBills,
   writeCalendar,
+  writeDevices,
   writeFamily,
   writeInventory,
   writeSubscriptions,
@@ -92,6 +96,35 @@ const PEOPLE = [
   { id: "person-2", name: "Mum", role: "parent" },
   { id: "person-3", name: "Anu", role: "child" },
   { id: "person-4", name: "Ravi", role: "child" },
+];
+
+/**
+ * A demo smart home, pointed at the edge simulator so the whole of /devices
+ * works after a seed: `pnpm edge`, then the readings start moving. One of each
+ * kind the page draws, including the two that are monitor-only.
+ *
+ * The air conditioners and the geyser are narrowed below what their kind
+ * allows, because that is the interesting case — a unit is not asked for more
+ * than it is rated for, and the page and the API both enforce it.
+ */
+const CONTROLLERS = [
+  {
+    id: "demo-edge",
+    name: "Edge simulator",
+    url: "http://127.0.0.1:8099",
+    tokenEnv: "EDGE_TOKEN",
+    notes: "demo data — scripts/edge-sim.mjs, started with `pnpm edge`",
+  },
+];
+
+const DEVICES = [
+  { id: "demo-device-1", name: "Bedroom AC", kind: "ac", room: "Bedroom", address: "ac-bedroom", minSetpoint: 18, maxSetpoint: 28, modes: ["cool", "dry", "fan"] },
+  { id: "demo-device-2", name: "Living room AC", kind: "ac", room: "Living room", address: "ac-living", minSetpoint: 18, maxSetpoint: 28 },
+  { id: "demo-device-3", name: "Bath geyser", kind: "water-heater", room: "Bathroom", address: "geyser-bath", maxSetpoint: 60 },
+  { id: "demo-device-4", name: "Sump pump", kind: "water-pump", room: "Utility", address: "pump-sump" },
+  { id: "demo-device-5", name: "Overhead tank", kind: "water-tank", room: "Utility", address: "tank-overhead" },
+  { id: "demo-device-6", name: "Water filter", kind: "switch", room: "Kitchen", address: "plug-filter" },
+  { id: "demo-device-7", name: "Outside probe", kind: "sensor", room: "Balcony", address: "probe-outside", readOnly: true },
 ];
 
 /**
@@ -296,5 +329,16 @@ if ("error" in calendar) throw new Error(`demo calendar is invalid: ${calendar.e
 await writeCalendar(calendar.doc);
 const dates = calendar.doc.events.map((e) => e.date);
 console.log(`seeded ${calendar.doc.events.length} calendar events, ${dates[0]} to ${dates[dates.length - 1]}`);
+
+const home = normalizeDevices({
+  controllers: CONTROLLERS,
+  devices: DEVICES.map((device) => ({ ...device, controller: CONTROLLERS[0].id })),
+});
+if ("error" in home) throw new Error(`demo devices are invalid: ${home.error}`);
+await writeDevices(home.doc);
+console.log(
+  `seeded ${home.doc.controllers.length} edge controller and ${home.doc.devices.length} devices ` +
+    `(run \`pnpm edge\` to bring them online)`,
+);
 
 await close();

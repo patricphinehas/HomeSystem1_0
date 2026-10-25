@@ -21,6 +21,7 @@ import {
   timeRange,
   todayISO,
   upcoming,
+  whenLabel,
 } from "./calendar.ts";
 
 const event = (over: Partial<CalEvent> = {}): CalEvent =>
@@ -70,6 +71,16 @@ test("days are counted as days, not as hours", () => {
   assert.equal(daysUntil("2026-10-18", "2026-10-19"), -1);
   // Across a DST change in the reader's zone, a day is still a day.
   assert.equal(daysUntil("2026-03-30", "2026-03-28"), 2);
+});
+
+test("a day reads as today, tomorrow, a count, or a date", () => {
+  assert.equal(whenLabel("2026-10-19", "2026-10-19"), "Today");
+  assert.equal(whenLabel("2026-10-20", "2026-10-19"), "Tomorrow");
+  assert.equal(whenLabel("2026-10-22", "2026-10-19"), "in 3 days");
+  assert.equal(whenLabel("2026-10-25", "2026-10-19"), "in 6 days");
+  assert.equal(whenLabel("2026-10-26", "2026-10-19"), "26/10");
+  // A date that has gone past gets the date, never "in -2 days".
+  assert.equal(whenLabel("2026-10-17", "2026-10-19"), "17/10");
 });
 
 test("a day's events are ordered with the all-day ones first", () => {

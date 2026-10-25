@@ -130,6 +130,21 @@ const iso = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 /** Whole days from one date to another. Negative when `date` is in the past. */
 export const daysUntil = (date: string, from = todayISO()) => Math.round((utc(date) - utc(from)) / DAY);
 
+/**
+ * How far off a day is, in the words a person would use: "Today", "Tomorrow",
+ * "in 3 days", and then the plain day/month once counting days stops helping.
+ * Anything already past reads as the date too — every screen that calls this
+ * is looking forwards, so "2 days ago" is phrasing for a case that never
+ * arrives, and the guard is there so a stale date cannot read "in -2 days".
+ */
+export function whenLabel(date: string, from = todayISO()) {
+  const days = daysUntil(date, from);
+  if (days === 0) return "Today";
+  if (days === 1) return "Tomorrow";
+  if (days > 1 && days < 7) return `in ${days} days`;
+  return `${date.slice(8)}/${date.slice(5, 7)}`;
+}
+
 export type Day = { date: string; inMonth: boolean };
 
 /**

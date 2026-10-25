@@ -1,10 +1,12 @@
 /**
- * The database the API talks to. `DB_SELECT` in `.env` is `supabase` or `mongodb`.
- * Callers in server/index.ts and scripts/ only see this file.
+ * The database the API talks to. `DB_SELECT` in `.env` is `supabase`, `mongodb`
+ * or `sqlite`. Callers in server/index.ts and scripts/ only see this file, and
+ * every driver answers the same shape, so nothing above here knows which.
  */
 
 import * as mongo from "./db.mongo.ts";
 import * as pg from "./db.postgres.ts";
+import * as sqlite from "./db.sqlite.ts";
 import { isDbChoice, NotConfigured, selectedDb } from "./db-select.ts";
 
 export { NotConfigured };
@@ -13,6 +15,7 @@ const driver = () => {
   const which = selectedDb();
   if (which === "supabase") return pg;
   if (which === "mongodb") return mongo;
+  if (which === "sqlite") return sqlite;
   throw new NotConfigured();
 };
 
@@ -32,6 +35,8 @@ export const writeChatDay: typeof pg.writeChatDay = (day) => driver().writeChatD
 export const readFamily = () => driver().readFamily();
 export const writeFamily: typeof pg.writeFamily = (doc) => driver().writeFamily(doc);
 export const readCalendar = () => driver().readCalendar();
+export const readDevices = () => driver().readDevices();
+export const writeDevices: typeof pg.writeDevices = (doc) => driver().writeDevices(doc);
 export const writeCalendar: typeof pg.writeCalendar = (doc) => driver().writeCalendar(doc);
 export const insertBills: typeof pg.insertBills = (bills) => driver().insertBills(bills);
 export const readLines = () => driver().readLines();

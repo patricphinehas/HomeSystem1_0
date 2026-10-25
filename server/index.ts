@@ -1,5 +1,5 @@
 /**
- * The whole data API. DB_SELECT in .env chooses Supabase or MongoDB. Routes:
+ * The whole data API. DB_SELECT in .env chooses SQLite, MongoDB or Supabase. Routes:
  *
  *   GET  /api/inventory   categories and their items
  *   PUT  /api/inventory   replace the inventory
@@ -12,6 +12,11 @@
  *   PUT  /api/calendar    replace it
  *   GET  /api/family      who lives here
  *   PUT  /api/family      replace them
+ *   GET  /api/devices     the smart-home registry: controllers and devices
+ *   PUT  /api/devices     replace it
+ *   GET  /api/devices/state    live readings, through the edge controllers
+ *   POST /api/devices/command  switch or set one device
+ *   GET  /api/devices/check    one controller's /health, for the setup page
  *   GET  /api/mcp         the tools this server exposes, and the servers in .mcp.json
  *   POST /api/mcp         MCP itself, JSON-RPC (see mcp.ts)
  *   POST /api/chat        one chat turn against the configured model, tools included
@@ -34,10 +39,12 @@ import { normalizeInventory } from "../lib/inventory.ts";
 import { normalizeSubscriptions } from "../lib/subscriptions.ts";
 import { normalizeCalendar } from "../lib/calendar.ts";
 import { normalizeFamily } from "../lib/family.ts";
+import { normalizeDevices, planCommand } from "../lib/devices.ts";
 import { appendToDay, sortDays, toLogged, type LoggedMessage } from "../lib/chat-log.ts";
 import { todayISO } from "../lib/calendar.ts";
 import { chat, currentProvider, describeProviders, isProvider } from "./chat.ts";
 import { mcpEndpoint, mcpInfo } from "./mcp.ts";
+import { checkController, forgetHomeState, readHomeState, sendCommand } from "./edge.ts";
 import { readSettings, writeSettings } from "./settings.ts";
 import {
   NotConfigured,
@@ -46,12 +53,14 @@ import {
   readBills,
   readCalendar,
   readChatDays,
+  readDevices,
   readFamily,
   readInventory,
   readLines,
   readSubscriptions,
   writeCalendar,
   writeChatDay,
+  writeDevices,
   writeFamily,
   writeInventory,
   writeSubscriptions,
@@ -150,6 +159,72 @@ app.put("/api/family", async (req, res) => {
   res.json({ ok: true, count: result.doc.people.length });
 });
 
+/* ---------------- smart home ---------------- */
+
+app.get("/api/devices", async (_req, res) => {
+  res.json(await readDevices());
+});
+
+app.put("/api/devices", async (req, res) => {
+  const result = normalizeDevices(req.body);
+  if ("error" in result) return res.status(400).json({ error: result.error });
+  await writeDevices(result.doc);
+  // The cached readings are keyed by device id; a renamed address or a deleted
+  // device must not be answered from the reading taken before the change.
+  forgetHomeState();
+  res.json({ ok: true, controllers: result.doc.controllers.length, devices: result.doc.devices.length });
+});
+
+/**
+ * What the house is doing right now. Always 200 when the registry reads: a
+ * controller that is unreachable is reported as such alongside the ones that
+ * answered, because "the kitchen Pi is down" is the useful answer and a 502
+ * would hide the four devices that are fine.
+ */
+app.get("/api/devices/state", async (_req, res) => {
+  res.json(await readHomeState(await readDevices()));
+});
+
+/**
+ * Switch or set one device. Two gates, in this order: the device has to be in
+ * the registry, and `planCommand` has to agree the instruction is one that
+ * device takes. Only then does anything reach the controller.
+ */
+app.post("/api/devices/command", async (req, res) => {
+  const id = String(req.body?.deviceId ?? "").trim();
+  if (!id) return res.status(400).json({ error: "deviceId is required." });
+
+  const doc = await readDevices();
+  const device = doc.devices.find((d) => d.id === id);
+  if (!device) return res.status(404).json({ error: `No device with id "${id}".` });
+
+  const controller = doc.controllers.find((c) => c.id === device.controller);
+  if (!controller) return res.status(409).json({ error: `${device.name || id} has no controller.` });
+
+  const plan = planCommand(device, {
+    power: req.body?.power,
+    setpoint: req.body?.setpoint,
+    mode: req.body?.mode,
+    fan: req.body?.fan,
+  });
+  if ("error" in plan) return res.status(400).json({ error: plan.error });
+
+  const sent = await sendCommand(controller, device, plan.command);
+  // The controller being off or refusing is the household's to fix and the
+  // message says which, so it is a 502 with the reason and not a 500.
+  if (!sent.ok) return res.status(502).json({ error: sent.error, sent: plan.command });
+  res.json({ ok: true, sent: plan.command, clamped: plan.clamped, state: sent.state });
+});
+
+/** GET /api/devices/check?controller=<id> — the setup page's Test button. */
+app.get("/api/devices/check", async (req, res) => {
+  const id = String(req.query.controller ?? "").trim();
+  const { controllers } = await readDevices();
+  const controller = controllers.find((c) => c.id === id);
+  if (!controller) return res.status(404).json({ error: `No controller with id "${id}".` });
+  res.json(await checkController(controller));
+});
+
 app.get("/api/mcp", (_req, res) => {
   res.json({ ...mcpInfo(), providers: describeProviders(), provider: currentProvider() });
 });
@@ -208,10 +283,20 @@ app.post("/api/chat", async (req, res) => {
 app.use((err: Error & { status?: number; code?: string }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (err instanceof NotConfigured) return res.status(503).json({ error: err.message });
 
-  const offline = /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|CONNECT_TIMEOUT|terminating connection|password authentication|MongoNetworkError|MongoServerSelectionError|server selection/i.test(
-    `${err.name} ${err.code} ${err.message}`,
-  );
+  const detail = `${err.name} ${err.code} ${err.message}`;
+  // SQLITE_CANTOPEN and friends are the same class of problem as a refused
+  // connection: the database named in .env is not usable, and it is the
+  // household's to fix. A locked file gets its own line because the fix is
+  // different — something else has the file open.
+  const offline =
+    /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|CONNECT_TIMEOUT|terminating connection|password authentication|MongoNetworkError|MongoServerSelectionError|server selection|SQLITE_CANTOPEN|SQLITE_READONLY|SQLITE_NOTADB|EACCES|EPERM/i.test(
+      detail,
+    );
   if (offline) return res.status(503).json({ error: `Cannot reach the database at ${describeTarget()}. (${err.message})` });
+
+  if (/SQLITE_BUSY|database is locked/i.test(detail)) {
+    return res.status(503).json({ error: `${describeTarget()} is locked by another process. (${err.message})` });
+  }
 
   // A missing table means the schema was never applied — say so, it is one command.
   if (err.code === "42P01") {

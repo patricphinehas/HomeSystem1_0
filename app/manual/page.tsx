@@ -25,14 +25,16 @@ const Key = ({ children }: { children: React.ReactNode }) => (
   <code className="rounded bg-surface px-1 py-0.5 font-mono text-[0.85em] text-fg">{children}</code>
 );
 
+/** The same order as the sidebar, for the same reason: what the app is for first. */
 const CONTENTS = [
   ["start", "Getting started"],
   ["overview", "Overview"],
-  ["control", "Home control"],
+  ["analytics", "Analytics"],
   ["inventory", "Inventory"],
   ["upload", "Entering a bill"],
-  ["analytics", "Analytics"],
   ["subscriptions", "Subscriptions"],
+  ["devices", "Smart home"],
+  ["control", "Home control"],
   ["calendar", "Calendar"],
   ["mcp", "MCP tools and chat"],
   ["settings", "Settings"],
@@ -66,7 +68,8 @@ export default function ManualPage() {
       <Section id="start" title="Getting started">
         <p>
           Home System runs on your own machine: the pages on port 3000, a small data API on port 4000, and a database
-          you choose. Nothing leaves the house unless you point the inference engine at a hosted model.
+          you choose — a SQLite file that needs nothing installed, a MongoDB, or a hosted Postgres. Nothing leaves the
+          house unless you point the inference engine at a hosted model.
         </p>
         <p>
           Nothing shows data until the database is reachable. If every page is empty or warning, open{" "}
@@ -78,25 +81,35 @@ export default function ManualPage() {
 
       <Section id="overview" title="Overview">
         <p>
+          <strong>Today</strong> is everything the calendar has for the current day, earliest first, with an all-day
+          entry at the top. <strong>Coming up</strong> carries on from tomorrow — the next six entries, each labelled
+          Tomorrow, in so many days, or by its date. Both are read-only here: open{" "}
+          <Link href="/calendar" className="text-accent hover:underline">Calendar</Link> to add to a day or to RSVP.
+          An entry that still needs a booking says so.
+        </p>
+        <p>
           The four counters are categories, items tracked, items running low and items at zero. <strong>Buy next</strong>{" "}
           is every item at or below its minimum, worst first. It is driven entirely by the minimums you set in
           Inventory; an item with a minimum of zero never appears there.
         </p>
       </Section>
 
-      <Section id="control" title="Home control">
+      <Section id="analytics" title="Analytics">
         <p>
-          <Link href="/control" className="text-accent hover:underline">
-            Home control
-          </Link>{" "}
-          is the household activity list and the only view of the machine running the app. It shows what is running
-          low, the latest bills, and the subscriptions on record, each with a link to the page where you change them.
-          A recent bill opens in place.
+          Spend by month, category, store and tag, with a three-month projection from the trend of what you have
+          already spent. The projection is a straight line, not a forecast — treat it as &ldquo;at this rate&rdquo;.
         </p>
         <p>
-          The machine panel says whether the pages, the data API, and the selected database answered, and names the
-          database target from Settings. It does not read disk space, NAS shares, or a power switch — those are listed
-          as not connected, because nothing in the app can see them.
+          <strong>Deviations</strong> are items whose latest price is well off their own average. <strong>Inflation</strong>{" "}
+          is per item, annualised, plus a basket index that starts at 100 in the first month with data. An item needs at
+          least two purchases in the same base unit before any of it can be worked out.
+        </p>
+        <p>
+          This is the number worth having. A published inflation rate is an average over a basket somebody else chose;
+          the index here is <em>your</em> basket, weighted by what you actually spend, carried forward through the
+          months you did not buy something, and traceable to the receipts behind it. Where the two disagree, this is
+          the one you can check line by line — and it is what turns &ldquo;things cost more&rdquo; into a figure you
+          can plan a year of supplies against.
         </p>
       </Section>
 
@@ -128,18 +141,6 @@ export default function ManualPage() {
         </p>
       </Section>
 
-      <Section id="analytics" title="Analytics">
-        <p>
-          Spend by month, category, store and tag, with a three-month projection from the trend of what you have
-          already spent. The projection is a straight line, not a forecast — treat it as &ldquo;at this rate&rdquo;.
-        </p>
-        <p>
-          <strong>Deviations</strong> are items whose latest price is well off their own average. <strong>Inflation</strong>{" "}
-          is per item, annualised, plus a basket index that starts at 100 in the first month with data. An item needs at
-          least two purchases in the same base unit before any of it can be worked out.
-        </p>
-      </Section>
-
       <Section id="subscriptions" title="Subscriptions">
         <p>
           What the household pays for that never appears on a till receipt. Record what each one costs and how often it
@@ -147,6 +148,65 @@ export default function ManualPage() {
           what you pay a month, what you pay a year, and a per-month figure on every row however it is billed. A
           one-off is kept out of those totals, because it is not a running cost. Mark a plan shareable and record the
           seats, so it is obvious which ones have room and which are being paid for twice.
+        </p>
+      </Section>
+
+      <Section id="devices" title="Smart home">
+        <p>
+          <Link href="/devices" className="text-accent hover:underline">
+            Smart home
+          </Link>{" "}
+          controls air conditioners, thermostats, water heaters, pumps, and the sensors that watch them. Nothing is
+          paired directly: every device belongs to an <strong>edge controller</strong> — one box on your own network (a
+          Raspberry Pi, an ESP32 gateway, Home Assistant) that already speaks whatever the device speaks and answers
+          three HTTP routes on top. The app only ever talks to that box, which is why no device password is ever in
+          this app and nothing has to be opened to the internet.
+        </p>
+        <p>
+          <strong>Control</strong> is the live tab. Readings arrive every five seconds, and pause while the tab is in
+          the background. Each card shows what the device reads, what it is set to, and what it is drawing; the
+          buttons send one instruction and the card then shows what the controller said came back, not what you
+          pressed. A unit behind an infrared blaster often cannot confirm anything, and the card says so rather than
+          pretending. A controller that is not answering gets one line naming it, and everything it owns reads as
+          offline with its controls disabled.
+        </p>
+        <p>
+          <strong>Setup</strong> is the registry, and it saves as you type. A controller row is a name, its address,
+          and the name of the <Key>.env</Key> key its token is in — the token itself is never stored here or sent to
+          the browser. <Key>Test</Key> asks the server to call that controller and reports what happened. A device row
+          is a name, a kind, a room, which controller owns it and the address that controller knows it by; anything a
+          controller reports that you have not added yet is offered under <strong>Reported but not added</strong>, so
+          there is no address to look up by hand.
+        </p>
+        <p>
+          Two limits are worth setting. <strong>Allowed</strong> narrows a unit's range inside what its kind permits —
+          a geyser rated to 60°C is never asked for 75 even though water heaters go that high, and a request above the
+          limit is brought back to it rather than refused. <strong>Monitor only</strong> makes a device readable and
+          nothing else; it is enforced on the server, so the chat and any MCP client are refused too, not just the
+          buttons on this page.
+        </p>
+        <p>
+          No hardware yet? <Key>pnpm edge</Key> (or <Key>mise run edge</Key>) runs a simulated controller on port 8099
+          with an air conditioner, a geyser, a pump, a tank and a plug, and a crude model behind them, so switching the
+          geyser on actually warms the water up. Point a controller at{" "}
+          <Key>http://127.0.0.1:8099</Key> and the house comes alive. The routes a real controller has to answer are
+          documented, with a working implementation, in <Key>scripts/edge-sim.mjs</Key> and <Key>server/edge.ts</Key>.
+        </p>
+      </Section>
+
+      <Section id="control" title="Home control">
+        <p>
+          <Link href="/control" className="text-accent hover:underline">
+            Home control
+          </Link>{" "}
+          is the household activity list and the only view of the machine running the app. It shows what is running
+          low, the latest bills, and the subscriptions on record, each with a link to the page where you change them.
+          A recent bill opens in place.
+        </p>
+        <p>
+          The machine panel says whether the pages, the data API, and the selected database answered, and names the
+          database target from Settings. It does not read disk space, NAS shares, or a power switch — those are listed
+          as not connected, because nothing in the app can see them.
         </p>
       </Section>
 
@@ -230,8 +290,9 @@ export default function ManualPage() {
           leaves this browser: system, light or dark.
         </p>
         <p>
-          Switching <Key>DB_SELECT</Key> between MongoDB and Supabase takes effect immediately, as long as the other one
-          is configured and running. Changing a <em>connection string</em> does not — those are read once when the API
+          Switching <Key>DB_SELECT</Key> between SQLite, MongoDB and Supabase takes effect immediately, as long as the
+          other one is configured and running. Switching does not copy anything across: each database keeps whatever
+          was put into it. Changing a <em>connection string</em> does not — those are read once when the API
           starts, so the page says &ldquo;restart needed&rdquo; and means it.
         </p>
         <p>
