@@ -1,3 +1,10 @@
 allowBuilds:
   sharp: false
   unrs-resolver: false
+  # Both need their postinstall: electron downloads its prebuilt binary, esbuild
+  # its platform executable. Neither has a usable install without it.
+  electron: true
+  esbuild: true
+  # Squirrel.Windows packaging, which this project does not use: the Windows
+  # installer is NSIS. Its install script would only download tooling we never run.
+  electron-winstaller: false

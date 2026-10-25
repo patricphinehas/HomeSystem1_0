@@ -32,13 +32,24 @@ import type { DevicesDoc } from "../lib/devices.ts";
 import type { FamilyDoc } from "../lib/family.ts";
 import type { ChatDay, LoggedMessage } from "../lib/chat-log.ts";
 import type { Line } from "../lib/analytics.ts";
+import { sqliteSchemaFile } from "./paths.ts";
 
-const FILE = resolve(process.env.SQLITE_PATH?.trim() || "data/homesystem.db");
-
-/** Reported by the API and by `doctor`. A path, with nothing secret in it. */
-export const describeTarget = () => FILE;
+/**
+ * Where the file is, read when it is needed rather than when this module is
+ * imported. A desktop build sets SQLITE_PATH after its own process has started
+ * and before the first query, and reading it once at import time would quietly
+ * use the repo default instead.
+ */
+const wanted = () => resolve(process.env.SQLITE_PATH?.trim() || "data/homesystem.db");
 
 let db: DatabaseSync | null = null;
+let openedFile = "";
+
+/**
+ * Reported by the API and by `doctor`: the file that is actually open, or the
+ * one that would be opened next. A path, with nothing secret in it.
+ */
+export const describeTarget = () => openedFile || wanted();
 
 /**
  * Opens the file on first use, creating its directory if it is not there, and
@@ -48,16 +59,18 @@ let db: DatabaseSync | null = null;
  */
 const open = (): DatabaseSync => {
   if (db) return db;
-  mkdirSync(dirname(FILE), { recursive: true });
-  const opened = new DatabaseSync(FILE);
+  const file = wanted();
+  mkdirSync(dirname(file), { recursive: true });
+  const opened = new DatabaseSync(file);
   // Write-ahead logging, so the pages reading while a bill is being written do
   // not block on it. Foreign keys are off by default in SQLite, which would
   // quietly skip every `on delete cascade` in the schema.
   opened.exec("pragma journal_mode = wal");
   opened.exec("pragma foreign_keys = on");
   opened.exec("pragma busy_timeout = 4000");
-  opened.exec(readFileSync(new URL("../sqlite/schema.sql", import.meta.url), "utf8"));
+  opened.exec(readFileSync(sqliteSchemaFile(), "utf8"));
   db = opened;
+  openedFile = file;
   return opened;
 };
 
@@ -637,4 +650,5 @@ export async function counts(): Promise<{ categories: number; items: number; bil
 export const close = async () => {
   db?.close();
   db = null;
+  openedFile = "";
 };

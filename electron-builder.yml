@@ -1,0 +1,64 @@
+# How the desktop app is packaged. See electron_migration.md for why any of
+# this is the way it is; the short version is that this is a single-process
+# custom Next server, so node_modules ships with the app.
+appId: com.homesystem.desktop
+productName: Home System
+copyright: Source-available under FSL-1.1-ALv2
+
+directories:
+  # ./build is esbuild output, not electron-builder's resources.
+  buildResources: desktop/resources
+  output: dist
+
+# Everything the running app reads. node_modules is included by electron-builder
+# itself (production dependencies only), which is where next, express and the
+# database drivers come from.
+files:
+  - package.json
+  - next.config.ts
+  - desktop/dist/**/*
+  - "!desktop/dist/**/*.map"
+  # Only what the production server reads. `next dev` leaves hundreds of
+  # megabytes in .next/dev, and the build cache is nearly as large; neither is
+  # ever opened by `next({ dev: false })`.
+  - .next/**/*
+  - "!.next/cache/**/*"
+  - "!.next/dev/**/*"
+  - "!.next/types/**/*"
+  - "!.next/diagnostics/**/*"
+  - "!.next/trace"
+  - public/**/*
+  - sqlite/**/*
+  - supabase/**/*
+  - scripts/starter-inventory.mjs
+
+asar: true
+
+win:
+  icon: desktop/resources/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  # A real installer with a visible destination, not a one-click surprise, and
+  # per-user so it never asks for an administrator.
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Home System
+  artifactName: HomeSystem-Setup-${version}.${ext}
+  # The household's database lives in the per-user data directory. An uninstall
+  # takes the program and leaves the data.
+  deleteAppDataOnUninstall: false
+
+linux:
+  icon: desktop/resources/icon.png
+  category: Utility
+  target:
+    - deb
+    - rpm
+    - AppImage

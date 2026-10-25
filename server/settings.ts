@@ -13,15 +13,13 @@
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import type { Request, Response } from "express";
 import { patchEnv } from "../lib/env-file.ts";
 import { DEFAULT_REGION, isCurrency, isLocale, isTimezone, setRegion } from "../lib/region.ts";
 import { DB_CHOICES } from "./db-select.ts";
 import { PROVIDERS, currentProvider, describeProviders } from "./chat.ts";
 import { counts, describeTarget, serverInfo } from "./db.ts";
-
-const ENV_FILE = fileURLToPath(new URL("../.env", import.meta.url));
+import { envFile } from "./paths.ts";
 
 type Field = {
   key: string;
@@ -127,11 +125,11 @@ export function writeSettings(req: Request, res: Response) {
 
   let before = "";
   try {
-    before = readFileSync(ENV_FILE, "utf8");
+    before = readFileSync(envFile(), "utf8");
   } catch {
     // No .env yet — the first save creates it.
   }
-  writeFileSync(ENV_FILE, patchEnv(before, applied), "utf8");
+  writeFileSync(envFile(), patchEnv(before, applied), "utf8");
 
   for (const [key, value] of Object.entries(applied)) process.env[key] = value;
   applyRegion();

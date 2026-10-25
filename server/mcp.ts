@@ -13,7 +13,6 @@
  */
 
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import type { Request, Response } from "express";
 import { analyse, itemReport } from "../lib/analytics.ts";
 import { normalizeBill } from "../lib/bill.ts";
@@ -36,6 +35,7 @@ import {
   writeInventory,
 } from "./db.ts";
 import { readHomeState, sendCommand } from "./edge.ts";
+import { mcpFile } from "./paths.ts";
 
 export const PROTOCOL_VERSION = "2025-06-18";
 
@@ -426,7 +426,7 @@ type ServerConfig = { type?: string; url?: string; command?: string; args?: stri
  */
 export function externalServers() {
   try {
-    const file = fileURLToPath(new URL("../.mcp.json", import.meta.url));
+    const file = mcpFile();
     const config = JSON.parse(readFileSync(file, "utf8")) as { mcpServers?: Record<string, ServerConfig> };
     return Object.entries(config.mcpServers ?? {}).map(([name, server]) => {
       const url = server.url ? new URL(server.url) : null;
