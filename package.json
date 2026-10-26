@@ -1,6 +1,9 @@
 {
   "name": "homesystem",
   "version": "0.1.0",
+  "description": "Self-hosted household operations — inventory, grocery bills, spend analytics, and a shared family calendar.",
+  "author": "Patric Phinehas Raj <patricphinehas@gmail.com>",
+  "homepage": "https://github.com/patricphinehas/HomeSystem1_0",
   "license": "FSL-1.1-ALv2",
   "private": true,
   "type": "module",
